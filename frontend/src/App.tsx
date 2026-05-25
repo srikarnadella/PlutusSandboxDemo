@@ -1,8 +1,9 @@
-import React, { useEffect, useContext, useCallback } from "react";
+import React, { useEffect, useContext, useCallback, useState } from "react";
 
 import Header from "./Components/Headers";
 import Products from "./Components/ProductTypes/Products";
 import Items from "./Components/ProductTypes/Items";
+import SpendingReview from "./Components/SpendingReview";
 import Context from "./Context";
 
 import styles from "./App.module.css";
@@ -10,6 +11,8 @@ import styles from "./App.module.css";
 const App = () => {
   const { linkSuccess, isPaymentInitiation, itemId, dispatch } =
     useContext(Context);
+
+  const [showDashboard, setShowDashboard] = useState(false);
 
   const getInfo = useCallback(async () => {
     const response = await fetch("/api/info", { method: "POST" });
@@ -147,12 +150,26 @@ const App = () => {
 
   return (
     <div className={styles.App}>
+      {linkSuccess && (
+        <button
+          className={styles.dashboardToggle}
+          onClick={() => setShowDashboard((v) => !v)}
+        >
+          {showDashboard ? "← Back to App" : "API Dashboard"}
+        </button>
+      )}
       <div className={styles.container}>
         <Header />
         {linkSuccess && (
           <>
-            <Products />
-            {!isPaymentInitiation && itemId && <Items />}
+            {isPaymentInitiation || showDashboard ? (
+              <>
+                <Products />
+                {!isPaymentInitiation && itemId && <Items />}
+              </>
+            ) : (
+              <SpendingReview />
+            )}
           </>
         )}
       </div>

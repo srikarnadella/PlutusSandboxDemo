@@ -9,6 +9,7 @@ import com.plaid.quickstart.resources.AssetsResource;
 import com.plaid.quickstart.resources.AuthResource;
 import com.plaid.quickstart.resources.BalanceResource;
 import com.plaid.quickstart.resources.CraResource;
+import com.plaid.quickstart.resources.SpendingReviewResource;
 import com.plaid.quickstart.resources.HoldingsResource;
 import com.plaid.quickstart.resources.IdentityResource;
 import com.plaid.quickstart.resources.InfoResource;
@@ -131,6 +132,7 @@ public class QuickstartApplication extends Application<QuickstartConfiguration> 
     environment.jersey().register(new TransferCreateResource(plaidClient));
     environment.jersey().register(new UserTokenResource(plaidClient, plaidProducts));
     environment.jersey().register(new CraResource(plaidClient));
+    environment.jersey().register(new SpendingReviewResource(plaidClient));
   }
 
   protected PlaidApi client() {

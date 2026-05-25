@@ -245,16 +245,6 @@ const Header = () => {
                   </p>
                 )}
               </div>
-              {(isItemAccess || userToken || userId) && (
-                <p className={styles.requests}>
-                  Now that you have {accessToken && "an access_token"}
-                  {accessToken && (userToken || userId) && " and "}
-                  {userToken && "a user_token"}
-                  {userToken && userId && " and "}
-                  {userId && "a user_id"}, you can make all of the
-                  following requests:
-                </p>
-              )}
             </>
           )}
         </>
