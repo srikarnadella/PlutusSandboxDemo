@@ -33,7 +33,6 @@ const Link = () => {
 
   const onSuccess = React.useCallback(
     async (public_token: string) => {
-      // If the access_token is needed, send public_token to server
       const exchangePublicTokenForAccessToken = async () => {
         const response = await fetch("/api/set_access_token", {
           method: "POST",
@@ -64,11 +63,9 @@ const Link = () => {
         });
       };
 
-      // 'payment_initiation' products do not require the public_token to be exchanged for an access_token.
       if (isPaymentInitiation) {
         dispatch({ type: "SET_STATE", state: { isItemAccess: false } });
       } else if (isCraProductsExclusively) {
-        // When only CRA products are enabled, only user_token is needed. access_token/public_token exchange is not needed.
         dispatch({ type: "SET_STATE", state: { isItemAccess: false } });
       } else {
         await exchangePublicTokenForAccessToken();
@@ -88,7 +85,6 @@ const Link = () => {
   };
 
   if (window.location.href.includes("?oauth_state_id=")) {
-    // TODO: figure out how to delete this ts-ignore
     // @ts-ignore
     config.receivedRedirectUri = window.location.href;
     isOauth = true;
@@ -105,11 +101,41 @@ const Link = () => {
   return (
     <button
       type="button"
-      className="inline-flex items-center justify-center rounded bg-[var(--color-black-1000)] px-[2.4rem] py-[1.6rem] text-[1.6rem] font-semibold text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
       onClick={() => open()}
       disabled={!ready}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: "1rem",
+        background: ready ? "#4f46e5" : "rgba(99,102,241,0.3)",
+        color: ready ? "#fff" : "rgba(255,255,255,0.4)",
+        fontWeight: 700,
+        padding: "1.6rem 4rem",
+        borderRadius: "1.4rem",
+        border: "none",
+        fontSize: "1.8rem",
+        cursor: ready ? "pointer" : "not-allowed",
+        transition: "all 0.2s",
+        boxShadow: ready ? "0 8px 40px rgba(99,102,241,0.35)" : undefined,
+        letterSpacing: "-0.01em",
+      }}
+      onMouseEnter={(e) => {
+        if (ready) {
+          (e.currentTarget as HTMLButtonElement).style.background = "#4338ca";
+          (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
+          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 12px 48px rgba(99,102,241,0.45)";
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (ready) {
+          (e.currentTarget as HTMLButtonElement).style.background = "#4f46e5";
+          (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
+          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 40px rgba(99,102,241,0.35)";
+        }
+      }}
     >
-      Launch Link
+      Connect your bank account
+      <span style={{ fontSize: "1.6rem" }}>→</span>
     </button>
   );
 };

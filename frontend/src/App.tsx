@@ -1,5 +1,6 @@
 import React, { useEffect, useContext, useCallback, useState } from "react";
 
+import Landing from "./Components/Landing";
 import Header from "./Components/Headers";
 import Products from "./Components/ProductTypes/Products";
 import Items from "./Components/ProductTypes/Items";
@@ -12,19 +13,17 @@ const App = () => {
   const { linkSuccess, isPaymentInitiation, itemId, dispatch } =
     useContext(Context);
 
+  const [postLinkView, setPostLinkView] = useState<"connected" | "review">("connected");
   const [showDashboard, setShowDashboard] = useState(false);
 
   const getInfo = useCallback(async () => {
     const response = await fetch("/api/info", { method: "POST" });
     if (!response.ok) {
       dispatch({ type: "SET_STATE", state: { backend: false } });
-      return { paymentInitiation: false };
+      return { paymentInitiation: false, isUserTokenFlow: false };
     }
     const data = await response.json();
-    const paymentInitiation: boolean =
-      data.products.includes("payment_initiation");
-
-    // CRA products are those that start with "cra_"
+    const paymentInitiation: boolean = data.products.includes("payment_initiation");
     const craProducts = data.products.filter((product: string) =>
       product.startsWith("cra_")
     );
@@ -37,8 +36,8 @@ const App = () => {
       state: {
         products: data.products,
         isPaymentInitiation: paymentInitiation,
-        isCraProductsExclusively: isCraProductsExclusively,
-        isUserTokenFlow: isUserTokenFlow,
+        isCraProductsExclusively,
+        isUserTokenFlow,
       },
     });
     return { paymentInitiation, isUserTokenFlow };
@@ -55,19 +54,13 @@ const App = () => {
       if (data.error != null) {
         dispatch({
           type: "SET_STATE",
-          state: {
-            linkToken: null,
-            linkTokenError: data.error,
-          },
+          state: { linkToken: null, linkTokenError: data.error },
         });
         return;
       }
       dispatch({
         type: "SET_STATE",
-        state: {
-          userToken: data.user_token || null,
-          userId: data.user_id || null
-        }
+        state: { userToken: data.user_token || null, userId: data.user_id || null },
       });
       return data.user_token || data.user_id;
     }
@@ -75,13 +68,10 @@ const App = () => {
 
   const generateToken = useCallback(
     async (isPaymentInitiation: boolean) => {
-      // Link tokens for 'payment_initiation' use a different creation flow in your backend.
       const path = isPaymentInitiation
         ? "/api/create_link_token_for_payment"
         : "/api/create_link_token";
-      const response = await fetch(path, {
-        method: "POST",
-      });
+      const response = await fetch(path, { method: "POST" });
       if (!response.ok) {
         let errorDetail;
         try {
@@ -110,16 +100,12 @@ const App = () => {
         if (data.error != null) {
           dispatch({
             type: "SET_STATE",
-            state: {
-              linkToken: null,
-              linkTokenError: data.error,
-            },
+            state: { linkToken: null, linkTokenError: data.error },
           });
           return;
         }
         dispatch({ type: "SET_STATE", state: { linkToken: data.link_token } });
       }
-      // Save the link_token to be used later in the Oauth flow.
       localStorage.setItem("link_token", data.link_token);
     },
     [dispatch]
@@ -127,52 +113,59 @@ const App = () => {
 
   useEffect(() => {
     const init = async () => {
-      const { paymentInitiation, isUserTokenFlow } = await getInfo(); // used to determine which path to take when generating token
-      // do not generate a new token for OAuth redirect; instead
-      // setLinkToken from localStorage
+      const { paymentInitiation, isUserTokenFlow } = await getInfo();
       if (window.location.href.includes("?oauth_state_id=")) {
         dispatch({
           type: "SET_STATE",
-          state: {
-            linkToken: localStorage.getItem("link_token"),
-          },
+          state: { linkToken: localStorage.getItem("link_token") },
         });
         return;
       }
-
-      if (isUserTokenFlow) {
-        await generateUserToken();
-      }
+      if (isUserTokenFlow) await generateUserToken();
       generateToken(paymentInitiation);
     };
     init();
   }, [dispatch, generateToken, generateUserToken, getInfo]);
 
+  // Pre-login: full-screen landing page
+  if (!linkSuccess) {
+    return <Landing />;
+  }
+
+  // API dashboard view (also payment_initiation always uses this)
+  if (isPaymentInitiation || showDashboard) {
+    return (
+      <div className={styles.App}>
+        <button className={styles.navButton} onClick={() => setShowDashboard(false)}>
+          ← Back to App
+        </button>
+        <div className={styles.container}>
+          <Products />
+          {!isPaymentInitiation && itemId && <Items />}
+        </div>
+      </div>
+    );
+  }
+
+  // Step 1: connected success screen
+  if (postLinkView === "connected") {
+    return (
+      <div className={styles.App}>
+        <button className={styles.navButton} onClick={() => setShowDashboard(true)}>
+          API Dashboard
+        </button>
+        <Header onContinue={() => setPostLinkView("review")} />
+      </div>
+    );
+  }
+
+  // Steps 2–4: spending review flow
   return (
     <div className={styles.App}>
-      {linkSuccess && (
-        <button
-          className={styles.dashboardToggle}
-          onClick={() => setShowDashboard((v) => !v)}
-        >
-          {showDashboard ? "← Back to App" : "API Dashboard"}
-        </button>
-      )}
-      <div className={styles.container}>
-        <Header />
-        {linkSuccess && (
-          <>
-            {isPaymentInitiation || showDashboard ? (
-              <>
-                <Products />
-                {!isPaymentInitiation && itemId && <Items />}
-              </>
-            ) : (
-              <SpendingReview />
-            )}
-          </>
-        )}
-      </div>
+      <button className={styles.navButton} onClick={() => setShowDashboard(true)}>
+        API Dashboard
+      </button>
+      <SpendingReview />
     </div>
   );
 };
