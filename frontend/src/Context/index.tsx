@@ -1,4 +1,6 @@
-import { createContext, useReducer, Dispatch, ReactNode } from "react";
+import { createContext, useReducer, Dispatch, ReactNode, useEffect } from "react";
+import { User } from "@supabase/supabase-js";
+import { supabase } from "../lib/supabase";
 
 interface QuickstartState {
   linkSuccess: boolean;
@@ -26,6 +28,10 @@ interface QuickstartState {
     display_message: string;
     institution_name: string;
   } | null;
+  // Supabase auth
+  supabaseUser: User | null;
+  isAuthLoading: boolean;
+  hasPlaidConnection: boolean;
 }
 
 const initialState: QuickstartState = {
@@ -34,7 +40,7 @@ const initialState: QuickstartState = {
   isPaymentInitiation: false,
   isCraProductsExclusively: false,
   isUserTokenFlow: false,
-  linkToken: "", // Don't set to null or error message will show up briefly when site loads
+  linkToken: "",
   userToken: null,
   userId: null,
   accessToken: null,
@@ -48,6 +54,9 @@ const initialState: QuickstartState = {
     error_message: "",
   },
   linkExitError: null,
+  supabaseUser: null,
+  isAuthLoading: true,
+  hasPlaidConnection: false,
 };
 
 type QuickstartAction = {
@@ -64,9 +73,8 @@ const Context = createContext<QuickstartContext>(
 );
 
 const { Provider } = Context;
-export const QuickstartProvider: React.FC<{ children: ReactNode }> = (
-  props
-) => {
+
+export const QuickstartProvider: React.FC<{ children: ReactNode }> = (props) => {
   const reducer = (
     state: QuickstartState,
     action: QuickstartAction
@@ -78,7 +86,61 @@ export const QuickstartProvider: React.FC<{ children: ReactNode }> = (
         return { ...state };
     }
   };
+
   const [state, dispatch] = useReducer(reducer, initialState);
+
+  useEffect(() => {
+    // Restore session on page load
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      dispatch({
+        type: "SET_STATE",
+        state: {
+          supabaseUser: session?.user ?? null,
+          isAuthLoading: false,
+        },
+      });
+      if (session?.user) {
+        checkPlaidConnection(session.user.id);
+      }
+    });
+
+    // Listen for auth changes (login, logout, token refresh)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        dispatch({
+          type: "SET_STATE",
+          state: {
+            supabaseUser: session?.user ?? null,
+            isAuthLoading: false,
+            // Clear Plaid state on logout
+            ...(!session ? {
+              linkSuccess: false,
+              hasPlaidConnection: false,
+              linkToken: "",
+            } : {}),
+          },
+        });
+        if (session?.user) {
+          checkPlaidConnection(session.user.id);
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const checkPlaidConnection = async (userId: string) => {
+    const { data } = await supabase
+      .from("user_profiles")
+      .select("plaid_item_id")
+      .eq("id", userId)
+      .maybeSingle();
+    dispatch({
+      type: "SET_STATE",
+      state: { hasPlaidConnection: !!(data?.plaid_item_id) },
+    });
+  };
+
   return <Provider value={{ ...state, dispatch }}>{props.children}</Provider>;
 };
 

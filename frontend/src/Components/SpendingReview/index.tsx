@@ -1,5 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import StepProgress from "../StepProgress";
+import { supabase } from "../../lib/supabase";
+import { apiFetch } from "../../lib/apiFetch";
+import type { User } from "@supabase/supabase-js";
 
 const PRESET_CATEGORIES = [
   "Food and Drink",
@@ -167,6 +170,111 @@ const SpendingReview = () => {
   const [selectedYear, setSelectedYear] = useState(_now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(_now.getMonth() + 1);
 
+  // Supabase user + persistence
+  const [user, setUser] = useState<User | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Load user and their saved profile on mount
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => {
+      setUser(data.user);
+      if (data.user) {
+        loadProfile(data.user.id);
+      } else {
+        setProfileLoading(false);
+      }
+    });
+  }, []);
+
+  const loadProfile = async (uid: string) => {
+    setProfileLoading(true);
+    try {
+      const [profileRes, goalsRes] = await Promise.all([
+        supabase
+          .from("user_profiles")
+          .select("monthly_income, rent, utilities, other_fixed, monthly_savings")
+          .eq("id", uid)
+          .maybeSingle(),
+        supabase
+          .from("spending_goals")
+          .select("*")
+          .eq("user_id", uid),
+      ]);
+
+      const profile = profileRes.data;
+      const savedGoals = goalsRes.data ?? [];
+
+      if (profile) {
+        setIncome({
+          monthlyIncome: profile.monthly_income?.toString() ?? "",
+          rent: profile.rent?.toString() ?? "",
+          utilities: profile.utilities?.toString() ?? "",
+          otherFixed: profile.other_fixed?.toString() ?? "",
+          monthlySavings: profile.monthly_savings?.toString() ?? "",
+        });
+      }
+
+      if (savedGoals.length > 0) {
+        setGoals((prev) =>
+          prev.map((g) => {
+            const saved = savedGoals.find((sg: any) => sg.category === g.category);
+            if (saved) {
+              return {
+                ...g,
+                enabled: saved.enabled,
+                avoid: saved.avoid,
+                monthlyLimit: saved.monthly_limit?.toString() ?? "",
+              };
+            }
+            return g;
+          })
+        );
+        // Skip setup — go straight to review
+        setView("results");
+      }
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const saveProfile = async (uid: string, data: IncomeSetup) => {
+    await supabase.from("user_profiles").upsert({
+      id: uid,
+      monthly_income: parseFloat(data.monthlyIncome) || null,
+      rent: parseFloat(data.rent) || null,
+      utilities: parseFloat(data.utilities) || null,
+      other_fixed: parseFloat(data.otherFixed) || null,
+      monthly_savings: parseFloat(data.monthlySavings) || null,
+      updated_at: new Date().toISOString(),
+    });
+  };
+
+  const saveGoals = async (uid: string, currentGoals: GoalRow[]) => {
+    const rows = currentGoals.map((g) => ({
+      user_id: uid,
+      category: g.category,
+      monthly_limit: g.monthlyLimit ? parseFloat(g.monthlyLimit) : null,
+      avoid: g.avoid,
+      enabled: g.enabled,
+    }));
+    await supabase
+      .from("spending_goals")
+      .upsert(rows, { onConflict: "user_id,category" });
+  };
+
+  // Debounced auto-save whenever income changes
+  useEffect(() => {
+    if (!user) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveProfile(user.id, income);
+    }, 1500);
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    };
+  }, [income, user]);
+
   // Last 13 months as options (current + 12 prior)
   const monthOptions = Array.from({ length: 13 }, (_, i) => {
     const d = new Date(_now.getFullYear(), _now.getMonth() - i, 1);
@@ -221,9 +329,8 @@ const SpendingReview = () => {
       .map((g) => ({ category: g.category, monthly_limit: parseFloat(g.monthlyLimit) }));
     const avoid_categories = goals.filter((g) => g.avoid).map((g) => g.category);
     try {
-      const resp = await fetch("/api/spending_review", {
+      const resp = await apiFetch("/api/spending_review", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ budgets, avoid_categories, year: yr, month: mo }),
       });
       if (!resp.ok) throw new Error(`Request failed: ${resp.status}`);
@@ -231,6 +338,8 @@ const SpendingReview = () => {
       setResult(data);
       setExpandedViolations(new Set(data.goal_violations.map((_, i) => i)));
       setView("results");
+      // Persist goals to Supabase after a successful review
+      if (user) saveGoals(user.id, goals);
     } catch (e: any) {
       setError(e.message || "Unknown error");
     } finally {
@@ -288,6 +397,21 @@ const SpendingReview = () => {
   const hasAnyGoal = goals.some((g) => g.enabled || g.avoid);
 
   const panelPad = { flex: 1, padding: "2rem 5vw 6rem", maxWidth: "1200px", margin: "0 auto", width: "100%" };
+
+  // ── Profile loading ──────────────────────────────────────────────────────────
+  if (profileLoading) {
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "2rem" }}>
+        <div style={{
+          width: "4.8rem", height: "4.8rem", borderRadius: "50%",
+          border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366f1",
+          animation: "spin 0.8s linear infinite",
+        }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <p style={{ fontSize: "1.5rem", color: "#334155", margin: 0 }}>Loading your profile…</p>
+      </div>
+    );
+  }
 
   // ── PHASE 0: Income ──────────────────────────────────────────────────────────
   if (view === "income") {
@@ -385,6 +509,22 @@ const SpendingReview = () => {
   }
 
   // ── PHASE 2: Results ─────────────────────────────────────────────────────────
+  // Trigger review automatically when we arrive at results with no data yet
+  if (view === "results" && !result && !loading && !error) {
+    runReview();
+    return (
+      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "2rem" }}>
+        <div style={{
+          width: "4.8rem", height: "4.8rem", borderRadius: "50%",
+          border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366f1",
+          animation: "spin 0.8s linear infinite",
+        }} />
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+        <p style={{ fontSize: "1.5rem", color: "#334155", margin: 0 }}>Analyzing your spending…</p>
+      </div>
+    );
+  }
+
   if (view === "results" && result) {
     const grade = getGrade(result);
     const budgetPct = discretionary > 0
@@ -548,6 +688,16 @@ const SpendingReview = () => {
                 }}
               >
                 Set new goals
+              </button>
+              <button
+                onClick={() => supabase.auth.signOut()}
+                style={{
+                  background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+                  borderRadius: "0.8rem", padding: "0.8rem 1.8rem",
+                  fontSize: "1.3rem", color: "#475569", cursor: "pointer", fontWeight: 500,
+                }}
+              >
+                Sign out
               </button>
             </div>
           </div>
