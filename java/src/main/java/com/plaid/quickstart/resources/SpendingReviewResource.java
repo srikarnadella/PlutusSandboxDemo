@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -12,6 +13,8 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.plaid.client.model.AccountsBalanceGetRequest;
+import com.plaid.client.model.AccountsGetResponse;
 import com.plaid.client.model.Transaction;
 import com.plaid.client.model.TransactionsSyncRequest;
 import com.plaid.client.model.TransactionsSyncResponse;
@@ -25,9 +28,13 @@ import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 @Path("/spending_review")
 @Produces(MediaType.APPLICATION_JSON)
 public class SpendingReviewResource {
+  private static final Logger LOG = LoggerFactory.getLogger(SpendingReviewResource.class);
   private final PlaidApi plaidClient;
 
   public SpendingReviewResource(PlaidApi plaidClient) {
@@ -46,6 +53,7 @@ public class SpendingReviewResource {
     @JsonProperty("avoid_categories") public List<String> avoid_categories = new ArrayList<>();
     @JsonProperty public Integer year;
     @JsonProperty public Integer month;
+    @JsonProperty("user_id") public String userId;
   }
 
   public static class SimpleTransaction {
@@ -140,6 +148,79 @@ public class SpendingReviewResource {
     }
   }
 
+  public static class TransactionSummary {
+    @JsonProperty public String name;
+    @JsonProperty public double amount;
+    @JsonProperty public String date;
+    @JsonProperty public String category;
+    @JsonProperty("logo_url") public String logoUrl;
+    @JsonProperty("transaction_id") public String transactionId;
+
+    TransactionSummary(String name, double amount, String date, String category, String logoUrl, String transactionId) {
+      this.name = name;
+      this.amount = amount;
+      this.date = date;
+      this.category = category;
+      this.logoUrl = logoUrl;
+      this.transactionId = transactionId;
+    }
+  }
+
+  public static class CategorySummary {
+    @JsonProperty public String category;
+    @JsonProperty("amount_spent") public double amount_spent;
+    @JsonProperty("monthly_limit") public double monthly_limit;
+    @JsonProperty public boolean avoid;
+    @JsonProperty("transaction_count") public int transaction_count;
+
+    CategorySummary(String category, double amountSpent, double monthlyLimit, boolean avoid, int txCount) {
+      this.category = category;
+      this.amount_spent = amountSpent;
+      this.monthly_limit = monthlyLimit;
+      this.avoid = avoid;
+      this.transaction_count = txCount;
+    }
+  }
+
+  public static class AccountSummary {
+    @JsonProperty public String name;
+    @JsonProperty public String type;
+    @JsonProperty public String subtype;
+    @JsonProperty public String mask;
+    @JsonProperty public double current;
+    @JsonProperty public double available;
+    @JsonProperty public double limit;
+
+    AccountSummary(String name, String type, String subtype, String mask,
+                   double current, double available, double limit) {
+      this.name = name;
+      this.type = type;
+      this.subtype = subtype;
+      this.mask = mask;
+      this.current = current;
+      this.available = available;
+      this.limit = limit;
+    }
+  }
+
+  public static class MonthlyTrend {
+    @JsonProperty public int year;
+    @JsonProperty public int month;
+    @JsonProperty public String label;
+    @JsonProperty("total_spent") public double total_spent;
+
+    MonthlyTrend(int year, int month, String label, double totalSpent) {
+      this.year = year;
+      this.month = month;
+      this.label = label;
+      this.total_spent = totalSpent;
+    }
+  }
+
+  private static final List<String> PRESET_CATEGORIES = Arrays.asList(
+      "Food and Drink", "Shops", "Travel", "Recreation",
+      "Healthcare", "Service", "Transfer", "Payment");
+
   public static class SpendingReviewResponse {
     @JsonProperty("unusual_transactions") public List<UnusualTransaction> unusual_transactions;
     @JsonProperty("goal_violations") public List<GoalViolation> goal_violations;
@@ -147,16 +228,26 @@ public class SpendingReviewResource {
     @JsonProperty("top_merchants") public List<MerchantSummary> top_merchants;
     @JsonProperty public List<SubscriptionItem> subscriptions;
     @JsonProperty("previous_month") public PreviousMonthSummary previous_month;
+    @JsonProperty("all_transactions") public List<TransactionSummary> all_transactions;
+    @JsonProperty("category_spending") public List<CategorySummary> category_spending;
+    @JsonProperty public List<AccountSummary> accounts;
+    @JsonProperty("monthly_trends") public List<MonthlyTrend> monthly_trends;
 
     SpendingReviewResponse(List<UnusualTransaction> unusual, List<GoalViolation> violations,
                            ReviewStats stats, List<MerchantSummary> topMerchants,
-                           List<SubscriptionItem> subscriptions, PreviousMonthSummary previousMonth) {
+                           List<SubscriptionItem> subscriptions, PreviousMonthSummary previousMonth,
+                           List<TransactionSummary> allTransactions, List<CategorySummary> categorySpending,
+                           List<AccountSummary> accounts, List<MonthlyTrend> monthlyTrends) {
       this.unusual_transactions = unusual;
       this.goal_violations = violations;
       this.stats = stats;
       this.top_merchants = topMerchants;
       this.subscriptions = subscriptions;
       this.previous_month = previousMonth;
+      this.all_transactions = allTransactions;
+      this.category_spending = categorySpending;
+      this.accounts = accounts;
+      this.monthly_trends = monthlyTrends;
     }
   }
 
@@ -167,13 +258,13 @@ public class SpendingReviewResource {
   public SpendingReviewResponse runReview(SpendingReviewRequest request)
       throws IOException, InterruptedException {
 
-    List<Transaction> all = fetchAllTransactions();
+    String accessToken = resolveAccessToken(request.userId);
+    List<Transaction> all = fetchAllTransactions(accessToken);
 
     List<Transaction> debits = all.stream()
         .filter(t -> t.getAmount() != null && t.getAmount() > 0)
         .collect(Collectors.toList());
 
-    // Use requested month or default to current
     YearMonth targetMonth = (request.year != null && request.month != null)
         ? YearMonth.of(request.year, request.month)
         : YearMonth.now();
@@ -182,7 +273,6 @@ public class SpendingReviewResource {
         .filter(t -> t.getDate() != null && YearMonth.from(t.getDate()).equals(targetMonth))
         .collect(Collectors.toList());
 
-    // Previous month for delta comparison
     YearMonth prevMonth = targetMonth.minusMonths(1);
     List<Transaction> prevMonthDebits = debits.stream()
         .filter(t -> t.getDate() != null && YearMonth.from(t.getDate()).equals(prevMonth))
@@ -193,7 +283,6 @@ public class SpendingReviewResource {
         prevMonthDebits.size()
     );
 
-    // Core analysis — unusual transactions use all-time baseline but flag only this month
     List<UnusualTransaction> unusual = detectUnusual(debits, thisMonthDebits);
     List<GoalViolation> violations = checkGoals(request, thisMonthDebits);
 
@@ -205,21 +294,43 @@ public class SpendingReviewResource {
 
     List<MerchantSummary> topMerchants = computeTopMerchants(thisMonthDebits);
     List<SubscriptionItem> subscriptions = detectSubscriptions(debits);
+    List<TransactionSummary> allTransactions = toTransactionSummaries(thisMonthDebits);
+    List<CategorySummary> categorySpending = computeCategorySpending(request, thisMonthDebits);
+    List<AccountSummary> accounts = fetchAccountBalances(accessToken);
+    List<MonthlyTrend> monthlyTrends = computeMonthlyTrends(debits);
 
     return new SpendingReviewResponse(unusual, violations,
         new ReviewStats(thisMonthDebits.size(), totalSpent, period),
-        topMerchants, subscriptions, previousMonthSummary);
+        topMerchants, subscriptions, previousMonthSummary, allTransactions, categorySpending,
+        accounts, monthlyTrends);
   }
 
   // ── Private helpers ────────────────────────────────────────────────────────
 
-  private List<Transaction> fetchAllTransactions() throws IOException, InterruptedException {
+  private String resolveAccessToken(String userId) {
+    if (userId != null && !userId.isEmpty()) {
+      String token = QuickstartApplication.userTokens.get(userId);
+      if (token != null) return token;
+      try {
+        token = QuickstartApplication.supabaseService.getAccessToken(userId);
+        if (token != null) {
+          QuickstartApplication.userTokens.put(userId, token);
+          return token;
+        }
+      } catch (Exception e) {
+        // fall through to global fallback
+      }
+    }
+    return QuickstartApplication.accessToken;
+  }
+
+  private List<Transaction> fetchAllTransactions(String accessToken) throws IOException, InterruptedException {
     String cursor = null;
     List<Transaction> added = new ArrayList<>();
     boolean hasMore = true;
     while (hasMore) {
       TransactionsSyncRequest req = new TransactionsSyncRequest()
-          .accessToken(QuickstartApplication.accessToken)
+          .accessToken(accessToken)
           .cursor(cursor);
       TransactionsSyncResponse resp = PlaidApiHelper.callPlaid(plaidClient.transactionsSync(req));
       cursor = resp.getNextCursor();
@@ -230,7 +341,42 @@ public class SpendingReviewResource {
     return added;
   }
 
-  // Uses all-time baseline for mean/stddev but only flags transactions in thisMonth
+  private List<AccountSummary> fetchAccountBalances(String accessToken) {
+    try {
+      AccountsBalanceGetRequest req = new AccountsBalanceGetRequest().accessToken(accessToken);
+      AccountsGetResponse resp = PlaidApiHelper.callPlaid(plaidClient.accountsBalanceGet(req));
+      return resp.getAccounts().stream()
+          .map(a -> new AccountSummary(
+              a.getName() != null ? a.getName() : "Account",
+              a.getType() != null ? a.getType().getValue() : "other",
+              a.getSubtype() != null ? a.getSubtype().getValue() : "",
+              a.getMask() != null ? a.getMask() : "",
+              a.getBalances().getCurrent() != null ? a.getBalances().getCurrent() : 0,
+              a.getBalances().getAvailable() != null ? a.getBalances().getAvailable() : 0,
+              a.getBalances().getLimit() != null ? a.getBalances().getLimit() : 0))
+          .collect(Collectors.toList());
+    } catch (Exception e) {
+      LOG.warn("Failed to fetch account balances: {}", e.getMessage());
+      return new ArrayList<>();
+    }
+  }
+
+  private List<MonthlyTrend> computeMonthlyTrends(List<Transaction> debits) {
+    YearMonth curMonth = YearMonth.now();
+    List<MonthlyTrend> result = new ArrayList<>();
+    for (int i = 5; i >= 0; i--) {
+      YearMonth m = curMonth.minusMonths(i);
+      YearMonth mFinal = m;
+      double total = round2(debits.stream()
+          .filter(t -> t.getDate() != null && YearMonth.from(t.getDate()).equals(mFinal))
+          .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
+          .sum());
+      result.add(new MonthlyTrend(m.getYear(), m.getMonthValue(),
+          m.format(DateTimeFormatter.ofPattern("MMM yyyy")), total));
+    }
+    return result;
+  }
+
   private List<UnusualTransaction> detectUnusual(List<Transaction> allDebits,
                                                   List<Transaction> thisMonthDebits) {
     if (allDebits.size() < 2) return new ArrayList<>();
@@ -309,11 +455,13 @@ public class SpendingReviewResource {
   private List<MerchantSummary> computeTopMerchants(List<Transaction> debits) {
     Map<String, double[]> byMerchant = new HashMap<>();
     for (Transaction t : debits) {
-      String name = t.getName() != null ? t.getName() : "Unknown";
+      String name = (t.getMerchantName() != null && !t.getMerchantName().isEmpty())
+          ? t.getMerchantName()
+          : (t.getName() != null ? t.getName() : "Unknown");
       double amount = t.getAmount() != null ? t.getAmount() : 0;
       byMerchant.computeIfAbsent(name, k -> new double[]{0, 0});
-      byMerchant.get(name)[0] += amount;  // total
-      byMerchant.get(name)[1] += 1;       // count
+      byMerchant.get(name)[0] += amount;
+      byMerchant.get(name)[1] += 1;
     }
 
     return byMerchant.entrySet().stream()
@@ -324,11 +472,12 @@ public class SpendingReviewResource {
   }
 
   private List<SubscriptionItem> detectSubscriptions(List<Transaction> allDebits) {
-    // Group by merchant
     Map<String, List<Transaction>> byMerchant = new HashMap<>();
     for (Transaction t : allDebits) {
       if (t.getDate() == null) continue;
-      String name = t.getName() != null ? t.getName() : "Unknown";
+      String name = (t.getMerchantName() != null && !t.getMerchantName().isEmpty())
+          ? t.getMerchantName()
+          : (t.getName() != null ? t.getName() : "Unknown");
       byMerchant.computeIfAbsent(name, k -> new ArrayList<>()).add(t);
     }
 
@@ -338,7 +487,6 @@ public class SpendingReviewResource {
       List<Transaction> txs = entry.getValue();
       if (txs.size() < 2) continue;
 
-      // Count distinct months this merchant appears in
       Set<YearMonth> months = txs.stream()
           .filter(t -> t.getDate() != null)
           .map(t -> YearMonth.from(t.getDate()))
@@ -346,7 +494,6 @@ public class SpendingReviewResource {
 
       if (months.size() < 2) continue;
 
-      // Check amount consistency: 80%+ of transactions within 10% of average
       double avg = txs.stream()
           .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
           .average().orElse(0);
@@ -390,6 +537,55 @@ public class SpendingReviewResource {
             t.getAmount() != null ? t.getAmount() : 0,
             t.getDate() != null ? t.getDate().toString() : ""))
         .collect(Collectors.toList());
+  }
+
+  private String primaryCategory(Transaction t) {
+    if (t.getCategory() == null || t.getCategory().isEmpty()) return "Other";
+    List<String> cats = t.getCategory();
+    return cats.get(cats.size() - 1);
+  }
+
+  private List<TransactionSummary> toTransactionSummaries(List<Transaction> txs) {
+    return txs.stream()
+        .filter(t -> t.getDate() != null)
+        .sorted(Comparator.comparing(Transaction::getDate).reversed())
+        .map(t -> {
+          String displayName = (t.getMerchantName() != null && !t.getMerchantName().isEmpty())
+              ? t.getMerchantName()
+              : (t.getName() != null ? t.getName() : "Unknown");
+          return new TransactionSummary(
+              displayName,
+              t.getAmount() != null ? t.getAmount() : 0,
+              t.getDate().toString(),
+              primaryCategory(t),
+              t.getLogoUrl(),
+              t.getTransactionId());
+        })
+        .collect(Collectors.toList());
+  }
+
+  private List<CategorySummary> computeCategorySpending(SpendingReviewRequest request,
+                                                         List<Transaction> debits) {
+    Map<String, Double> budgetMap = new HashMap<>();
+    for (BudgetGoal g : request.budgets) budgetMap.put(g.category, g.monthly_limit);
+    Set<String> avoidSet = new java.util.HashSet<>(request.avoid_categories);
+
+    Set<String> allCats = new java.util.LinkedHashSet<>(PRESET_CATEGORIES);
+    budgetMap.keySet().forEach(allCats::add);
+    avoidSet.forEach(allCats::add);
+
+    List<CategorySummary> result = new ArrayList<>();
+    for (String cat : allCats) {
+      List<Transaction> matching = debits.stream()
+          .filter(t -> matchesCategory(t, cat))
+          .collect(Collectors.toList());
+      double total = round2(matching.stream()
+          .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0).sum());
+      double limit = budgetMap.getOrDefault(cat, 0.0);
+      boolean avoid = avoidSet.contains(cat);
+      result.add(new CategorySummary(cat, total, limit, avoid, matching.size()));
+    }
+    return result;
   }
 
   private static double round2(double v) { return Math.round(v * 100.0) / 100.0; }

@@ -35,23 +35,21 @@ import io.dropwizard.setup.Environment;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class QuickstartApplication extends Application<QuickstartConfiguration> {
-  // We store the accessToken in memory - in production, store it in a secure
-  // persistent data store.
   public static String accessToken;
   public static String userToken;
   public static String userId;
   public static String itemId;
-  // The paymentId is only relevant for the UK Payment Initiation product.
-  // We store the paymentId in memory - in production, store it in a secure
-  // persistent data store.
   public static String paymentId;
-  // The authorizationId is only relevant for Transfer ACH product.
-  // We store the transferId in memory - in production, store it in a secure
-  // persistent data store.
   public static String authorizationId;
   public static String accountId;
+
+  // Per-user Plaid access tokens; populated on set_access_token and restored from Supabase on demand
+  public static final Map<String, String> userTokens = new ConcurrentHashMap<>();
+  public static SupabaseService supabaseService;
 
   private PlaidApi plaidClient;
   private ApiClient apiClient;
@@ -109,8 +107,12 @@ public class QuickstartApplication extends Application<QuickstartConfiguration> 
 
     plaidClient = apiClient.createService(PlaidApi.class);
 
+    supabaseService = new SupabaseService(
+        System.getenv("SUPABASE_URL"),
+        System.getenv("SUPABASE_SERVICE_ROLE_KEY"));
+
     environment.jersey().register(new PlaidApiExceptionMapper());
-    environment.jersey().register(new AccessTokenResource(plaidClient, plaidProducts));
+    environment.jersey().register(new AccessTokenResource(plaidClient, plaidProducts, supabaseService));
     environment.jersey().register(new AccountsResource(plaidClient));
     environment.jersey().register(new AssetsResource(plaidClient));
     environment.jersey().register(new AuthResource(plaidClient));

@@ -2,9 +2,10 @@ import React, { useEffect, useContext } from "react";
 import { usePlaidLink } from "react-plaid-link";
 
 import Context from "../../Context";
+import { supabase } from "../../lib/supabase";
 
 const Link = () => {
-  const { linkToken, isPaymentInitiation, isCraProductsExclusively, dispatch } =
+  const { linkToken, isPaymentInitiation, isCraProductsExclusively, dispatch, supabaseUser } =
     useContext(Context);
 
   const onExit = React.useCallback(
@@ -36,10 +37,11 @@ const Link = () => {
       const exchangePublicTokenForAccessToken = async () => {
         const response = await fetch("/api/set_access_token", {
           method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          },
-          body: `public_token=${public_token}`,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            public_token: public_token,
+            user_id: supabaseUser?.id ?? "",
+          }),
         });
         if (!response.ok) {
           dispatch({
@@ -53,12 +55,21 @@ const Link = () => {
           return;
         }
         const data = await response.json();
+        // Write plaid_item_id directly from frontend so checkPlaidConnection works
+        // even if the backend's Supabase upsert fails for any reason
+        if (supabaseUser?.id && data.item_id) {
+          await supabase.from("user_profiles").upsert(
+            { id: supabaseUser.id, plaid_item_id: data.item_id },
+            { onConflict: "id" }
+          );
+        }
         dispatch({
           type: "SET_STATE",
           state: {
             itemId: data.item_id,
             accessToken: data.access_token,
             isItemAccess: true,
+            hasPlaidConnection: true,
           },
         });
       };
@@ -74,7 +85,7 @@ const Link = () => {
       dispatch({ type: "SET_STATE", state: { linkSuccess: true } });
       window.history.pushState("", "", "/");
     },
-    [dispatch, isPaymentInitiation, isCraProductsExclusively]
+    [dispatch, isPaymentInitiation, isCraProductsExclusively, supabaseUser]
   );
 
   let isOauth = false;

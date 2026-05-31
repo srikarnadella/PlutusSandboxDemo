@@ -1,20 +1,21 @@
 package com.plaid.quickstart.resources;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.List;
 
-import com.plaid.client.request.PlaidApi;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import com.plaid.client.model.ItemPublicTokenExchangeRequest;
 import com.plaid.client.model.ItemPublicTokenExchangeResponse;
+import com.plaid.client.request.PlaidApi;
 import com.plaid.quickstart.PlaidApiHelper;
 import com.plaid.quickstart.QuickstartApplication;
-import com.plaid.client.model.Products;
+import com.plaid.quickstart.SupabaseService;
 
-import java.util.List;
-import java.util.Arrays;
+import javax.ws.rs.Consumes;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
-import javax.ws.rs.FormParam;
 import javax.ws.rs.core.MediaType;
 
 import org.slf4j.Logger;
@@ -22,34 +23,49 @@ import org.slf4j.LoggerFactory;
 
 @Path("/set_access_token")
 @Produces(MediaType.APPLICATION_JSON)
+@Consumes(MediaType.APPLICATION_JSON)
 public class AccessTokenResource {
   private static final Logger LOG = LoggerFactory.getLogger(AccessTokenResource.class);
   private final PlaidApi plaidClient;
   private final List<String> plaidProducts;
+  private final SupabaseService supabaseService;
 
-  public AccessTokenResource(PlaidApi plaidClient, List<String> plaidProducts) {
+  public static class SetAccessTokenRequest {
+    @JsonProperty("public_token") public String publicToken;
+    @JsonProperty("user_id") public String userId;
+  }
+
+  public AccessTokenResource(PlaidApi plaidClient, List<String> plaidProducts, SupabaseService supabaseService) {
     this.plaidClient = plaidClient;
     this.plaidProducts = plaidProducts;
+    this.supabaseService = supabaseService;
   }
 
   @POST
-  public InfoResource.InfoResponse getAccessToken(@FormParam("public_token") String publicToken)
-    throws IOException {
-      ItemPublicTokenExchangeRequest request = new ItemPublicTokenExchangeRequest()
-      .publicToken(publicToken);
-
+  public InfoResource.InfoResponse setAccessToken(SetAccessTokenRequest req) throws IOException {
+    ItemPublicTokenExchangeRequest request = new ItemPublicTokenExchangeRequest()
+        .publicToken(req.publicToken);
     ItemPublicTokenExchangeResponse responseBody = PlaidApiHelper.callPlaid(
-      plaidClient.itemPublicTokenExchange(request));
+        plaidClient.itemPublicTokenExchange(request));
 
-    // Ideally, we would store this somewhere more persistent
-    QuickstartApplication.accessToken = responseBody.getAccessToken();
-    QuickstartApplication.itemId = responseBody.getItemId();
-    LOG.info("public token: " + publicToken);
-    LOG.info("access token: " + QuickstartApplication.accessToken);
-    LOG.info("item ID: " + responseBody.getItemId());
-    return new InfoResource.InfoResponse(Arrays.asList(), QuickstartApplication.accessToken,
-      QuickstartApplication.itemId);
+    String accessToken = responseBody.getAccessToken();
+    String itemId = responseBody.getItemId();
+
+    // Keep the global token set for backward-compat with other API Dashboard endpoints
+    QuickstartApplication.accessToken = accessToken;
+    QuickstartApplication.itemId = itemId;
+
+    // Per-user map so multi-user and post-restart lookups work
+    if (req.userId != null && !req.userId.isEmpty()) {
+      QuickstartApplication.userTokens.put(req.userId, accessToken);
+      try {
+        supabaseService.storeAccessToken(req.userId, accessToken, itemId);
+      } catch (Exception e) {
+        LOG.error("Failed to persist access token to Supabase for user {}: {}", req.userId, e.getMessage());
+      }
+    }
+
+    LOG.info("access token set for user={} item={}", req.userId, itemId);
+    return new InfoResource.InfoResponse(Arrays.asList(), accessToken, itemId);
   }
-
- 
 }
