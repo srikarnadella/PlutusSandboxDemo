@@ -154,13 +154,13 @@ const Budgets = ({ goals, discretionary, allocated, loading, error, onUpdateGoal
           onClick={onRunReview}
           disabled={loading || !hasAny}
           style={{
-            background: loading || !hasAny ? "rgba(255,255,255,0.07)" : "#4f46e5",
+            background: loading || !hasAny ? "rgba(255,255,255,0.07)" : "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
             color: loading || !hasAny ? "#334155" : "#fff",
             fontWeight: 700, fontSize: "1.6rem", padding: "1.3rem 3.6rem",
             borderRadius: "1.1rem", border: "none",
             cursor: loading || !hasAny ? "not-allowed" : "pointer",
-            boxShadow: loading || !hasAny ? undefined : "0 8px 28px rgba(99,102,241,0.35)",
-            transition: "background 0.15s",
+            boxShadow: loading || !hasAny ? undefined : "0 8px 28px rgba(99,102,241,0.4)",
+            transition: "opacity 0.15s",
           }}
         >
           {loading ? "Analyzing…" : "Save & Analyze →"}

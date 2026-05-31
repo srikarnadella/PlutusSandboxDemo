@@ -52,8 +52,8 @@ const Auth = () => {
     }}>
       {/* Wordmark */}
       <div style={{ marginBottom: "4.8rem" }}>
-        <span style={{ fontSize: "2.8rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>
-          Plaid<span style={{ color: "#818cf8" }}>Connect</span>
+        <span style={{ fontSize: "2.8rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.04em" }}>
+          Plu<span style={{ background: "linear-gradient(135deg, #818cf8, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>tus</span>
         </span>
       </div>
 
@@ -63,9 +63,10 @@ const Auth = () => {
         maxWidth: "42rem",
         background: "rgba(255,255,255,0.04)",
         border: "1px solid rgba(255,255,255,0.09)",
+        borderTop: "1px solid rgba(255,255,255,0.14)",
         borderRadius: "2rem",
         padding: "4rem",
-        backdropFilter: "blur(20px)",
+        backdropFilter: "blur(24px)",
       }}>
         {emailSent ? (
           /* Magic link sent state */
@@ -74,9 +75,12 @@ const Auth = () => {
               width: "6.4rem", height: "6.4rem", borderRadius: "50%",
               background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)",
               display: "flex", alignItems: "center", justifyContent: "center",
-              margin: "0 auto 2.4rem", fontSize: "3rem",
+              margin: "0 auto 2.4rem",
             }}>
-              ✉️
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2"/>
+                <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+              </svg>
             </div>
             <h2 style={{ margin: "0 0 1.2rem", fontSize: "2.4rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.02em" }}>
               Check your email
@@ -178,16 +182,16 @@ const Auth = () => {
                 style={{
                   width: "100%",
                   height: "5.6rem",
-                  background: email.trim() && !emailLoading ? "#4f46e5" : "rgba(255,255,255,0.07)",
+                  background: email.trim() && !emailLoading ? "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)" : "rgba(255,255,255,0.07)",
                   border: "none",
                   borderRadius: "1.2rem",
                   fontSize: "1.6rem",
                   fontWeight: 700,
                   color: email.trim() && !emailLoading ? "#fff" : "#334155",
                   cursor: email.trim() && !emailLoading ? "pointer" : "not-allowed",
-                  transition: "background 0.15s",
+                  transition: "opacity 0.15s, box-shadow 0.15s",
                   fontFamily: "inherit",
-                  boxShadow: email.trim() && !emailLoading ? "0 8px 24px rgba(99,102,241,0.35)" : undefined,
+                  boxShadow: email.trim() && !emailLoading ? "0 8px 28px rgba(99,102,241,0.4)" : undefined,
                 }}
               >
                 {emailLoading ? "Sending…" : "Send magic link"}

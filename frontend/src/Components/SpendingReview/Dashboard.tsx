@@ -64,10 +64,10 @@ const getGrade = (violations: number, pct: number | null) => {
 };
 
 const StatCard = ({ label, value, sub, subColor, bg, border }: { label: string; value: string; sub?: string; subColor?: string; bg?: string; border?: string }) => (
-  <div style={{ padding: "2.4rem 2.8rem", borderRadius: "1.6rem", background: bg ?? "rgba(255,255,255,0.04)", border: `1px solid ${border ?? "rgba(255,255,255,0.07)"}` }}>
-    <p style={{ margin: "0 0 0.8rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.1em" }}>{label}</p>
+  <div style={{ padding: "2.4rem 2.8rem", borderRadius: "1.6rem", background: bg ?? "rgba(255,255,255,0.04)", border: `1px solid ${border ?? "rgba(255,255,255,0.07)"}`, borderTop: `1px solid ${border ? border.replace("0.18", "0.3") : "rgba(255,255,255,0.1)"}` }}>
+    <p style={{ margin: "0 0 0.8rem", fontSize: "1.05rem", fontWeight: 700, color: "#2d3748", textTransform: "uppercase" as const, letterSpacing: "0.1em" }}>{label}</p>
     <p style={{ margin: 0, fontSize: "3.4rem", fontWeight: 900, color: "#f8fafc", lineHeight: 1, letterSpacing: "-0.03em" }}>{value}</p>
-    {sub && <p style={{ margin: "0.6rem 0 0", fontSize: "1.3rem", fontWeight: 600, color: subColor ?? "#475569" }}>{sub}</p>}
+    {sub && <p style={{ margin: "0.6rem 0 0", fontSize: "1.3rem", fontWeight: 500, color: subColor ?? "#3d4f63" }}>{sub}</p>}
   </div>
 );
 
@@ -177,7 +177,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
           {onReconnect && (
             <button
               onClick={onReconnect}
-              style={{ flexShrink: 0, background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1rem 2.4rem", borderRadius: "1rem", border: "none", cursor: "pointer", whiteSpace: "nowrap" as const }}
+              style={{ flexShrink: 0, background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1rem 2.4rem", borderRadius: "1rem", border: "none", cursor: "pointer", whiteSpace: "nowrap" as const, boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}
             >
               Reconnect bank →
             </button>

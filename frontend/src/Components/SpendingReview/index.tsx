@@ -44,21 +44,22 @@ const Sidebar = ({
 }: { activeTab: Tab; onTab: (t: Tab) => void; userEmail?: string; onSignOut: () => void }) => (
   <div style={{
     width: "220px", position: "fixed", top: 0, left: 0, bottom: 0,
-    background: "rgba(255,255,255,0.025)",
-    borderRight: "1px solid rgba(255,255,255,0.06)",
+    background: "rgba(7,11,20,0.85)",
+    backdropFilter: "blur(20px)",
+    borderRight: "1px solid rgba(255,255,255,0.07)",
     display: "flex", flexDirection: "column",
-    padding: "2.8rem 1.4rem",
+    padding: "2.4rem 1.2rem",
     zIndex: 100,
   }}>
     {/* Logo */}
-    <div style={{ marginBottom: "3.2rem", paddingLeft: "0.8rem" }}>
-      <span style={{ fontSize: "1.9rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.03em" }}>
-        Plaid<span style={{ color: "#818cf8" }}>Connect</span>
+    <div style={{ marginBottom: "3.2rem", paddingLeft: "1.2rem" }}>
+      <span style={{ fontSize: "1.8rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.04em" }}>
+        Plu<span style={{ background: "linear-gradient(135deg, #818cf8, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>tus</span>
       </span>
     </div>
 
     {/* Nav items */}
-    <nav style={{ display: "flex", flexDirection: "column", gap: "0.4rem", flex: 1 }}>
+    <nav style={{ display: "flex", flexDirection: "column", gap: "0.2rem", flex: 1 }}>
       {NAV.map(({ id, label, icon }) => {
         const active = activeTab === id;
         return (
@@ -66,28 +67,35 @@ const Sidebar = ({
             key={id}
             onClick={() => onTab(id)}
             style={{
-              display: "flex", alignItems: "center", gap: "1.2rem",
-              padding: "1rem 1.2rem",
-              borderRadius: "0.9rem",
+              display: "flex", alignItems: "center", gap: "1rem",
+              padding: "0.9rem 1.2rem",
+              borderRadius: "0.8rem",
               border: "none",
-              background: active ? "rgba(99,102,241,0.14)" : "none",
-              color: active ? "#a5b4fc" : "#475569",
-              fontWeight: active ? 700 : 500,
-              fontSize: "1.5rem",
+              borderLeft: active ? "2px solid #818cf8" : "2px solid transparent",
+              background: active ? "rgba(99,102,241,0.1)" : "transparent",
+              color: active ? "#c7d2fe" : "#475569",
+              fontWeight: active ? 600 : 400,
+              fontSize: "1.45rem",
               cursor: "pointer",
-              textAlign: "left",
+              textAlign: "left" as const,
               transition: "all 0.15s",
               width: "100%",
               letterSpacing: "-0.01em",
             }}
             onMouseEnter={(e) => {
-              if (!active) (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+              if (!active) {
+                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+                (e.currentTarget as HTMLButtonElement).style.color = "#94a3b8";
+              }
             }}
             onMouseLeave={(e) => {
-              if (!active) (e.currentTarget as HTMLButtonElement).style.background = "none";
+              if (!active) {
+                (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                (e.currentTarget as HTMLButtonElement).style.color = "#475569";
+              }
             }}
           >
-            <span style={{ fontSize: "1.4rem", opacity: active ? 1 : 0.5, width: "1.8rem", textAlign: "center" }}>{icon}</span>
+            <span style={{ fontSize: "1.3rem", opacity: active ? 1 : 0.45, width: "1.6rem", textAlign: "center" as const, flexShrink: 0 }}>{icon}</span>
             {label}
           </button>
         );
@@ -95,23 +103,24 @@ const Sidebar = ({
     </nav>
 
     {/* User footer */}
-    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "1.6rem" }}>
+    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "1.4rem" }}>
       {userEmail && (
-        <p style={{ margin: "0 0 1rem", fontSize: "1.2rem", color: "#334155", paddingLeft: "0.4rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <p style={{ margin: "0 0 1rem", fontSize: "1.15rem", color: "#2d3748", paddingLeft: "0.4rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
           {userEmail}
         </p>
       )}
       <button
         onClick={onSignOut}
         style={{
-          width: "100%", padding: "0.9rem 1.2rem", borderRadius: "0.9rem",
-          border: "1px solid rgba(255,255,255,0.08)",
-          background: "rgba(255,255,255,0.03)",
-          color: "#475569", fontSize: "1.4rem", fontWeight: 600,
-          cursor: "pointer", textAlign: "left", transition: "all 0.15s",
+          width: "100%", padding: "0.8rem 1.2rem", borderRadius: "0.8rem",
+          border: "1px solid rgba(255,255,255,0.07)",
+          background: "transparent",
+          color: "#334155", fontSize: "1.35rem", fontWeight: 500,
+          cursor: "pointer", textAlign: "left" as const, transition: "all 0.15s",
+          letterSpacing: "-0.01em",
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f87171"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(248,113,113,0.2)"; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#475569"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.08)"; }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f87171"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(248,113,113,0.25)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,113,113,0.05)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#334155"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.07)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
       >
         Sign out
       </button>

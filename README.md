@@ -1,271 +1,161 @@
-# Plaid quickstart
+# Plutus
 
-This repository accompanies Plaid's [**quickstart guide**][quickstart].
+Personal finance dashboard — a Mint/YNAB replacement built on [Plaid](https://plaid.com) and [Supabase](https://supabase.com).
 
-Here you'll find full example integration apps using our [**client libraries**][libraries].
+Connect your bank once, then get a full spending dashboard: budgets, savings goals, transaction history, subscriptions, account balances, and 6-month trends.
 
-This is the main Plaid Quickstart and is designed to show as many products and configurations as possible, including all five officially supported client libraries and multiple Plaid APIs, against a React frontend. 
+---
 
-## Additional Quickstarts
+## Stack
 
-If you prefer a non-React frontend platform, or a more minimal backend in one language with one endpoint, see the [Tiny Quickstart](https://github.com/plaid/tiny-quickstart), which shows a simpler backend and is available for JavaScript, Next.js, React, and React Native frontends.
+| Layer | Tech |
+|---|---|
+| Frontend | React 18 + TypeScript + Vite |
+| Auth + DB | Supabase (GoTrue + PostgreSQL) |
+| Backend | Java 11 + Dropwizard |
+| Bank data | Plaid Java SDK (sandbox / production) |
 
-For the Going.Plaid .NET SDK, see [Plaid Quickstart Blazor (Community)](https://github.com/jcoliz/PlaidQuickstartBlazor).
+---
 
-For Identity Verification, see the [Identity Verification Quickstart](https://github.com/plaid/idv-quickstart). 
+## Setup
 
-For Plaid Check (CRA) products, see the [Credit Quickstart](https://github.com/plaid/credit-quickstart).
+### Prerequisites
 
-For a more in-depth Transfer Quickstart, see the [Transfer Quickstart](https://github.com/plaid/transfer-quickstart).
+- Java 11+, Maven
+- Node 18+
+- A [Plaid developer account](https://dashboard.plaid.com/signup) (free sandbox)
+- A [Supabase project](https://supabase.com) (free tier)
 
-For a more in-depth Transactions tutorial, see the [Transactions tutorial](https://github.com/plaid/tutorial-resources/tree/main/transactions).
-
-For legacy (non-CRA) Income, see the [Income sample app](https://github.com/plaid/income-sample). 
-
-![Plaid quickstart app](/assets/quickstart.jpeg)
-
-## Table of contents
-
-<!-- toc -->
-
-- [1. Clone the repository](#1-clone-the-repository)
-  - [Special instructions for Windows](#special-instructions-for-windows)
-- [2. Set up your environment variables](#2-set-up-your-environment-variables)
-- [3. Run the quickstart](#3-run-the-quickstart)
-  - [Pre-requisites](#pre-requisites)
-  - [1. Running the backend](#1-running-the-backend)
-    - [Node](#node)
-    - [Python](#python)
-    - [Ruby](#ruby)
-    - [Go](#go)
-    - [Java](#java)
-    - [.NET](#net) (community support only)
-  - [2. Running the frontend](#2-running-the-frontend)
-- [Test credentials](#test-credentials)
-- [Troubleshooting](#troubleshooting)
-- [Testing OAuth](#testing-oauth)
-
-<!-- tocstop -->
-
-## 1. Clone the repository
-
-Using https:
+### 1. Clone and configure
 
 ```bash
-git clone https://github.com/plaid/quickstart
-cd quickstart
+git clone https://github.com/srikarnadella/Plutus.git
+cd Plutus
+cp .env.example java/.env
+cp frontend/.env.local.example frontend/.env.local
 ```
 
-Alternatively, if you use ssh:
+Fill in `java/.env` with your Plaid and Supabase credentials, and `frontend/.env.local` with your Supabase public keys.
 
+### 2. Create Supabase tables
+
+Run the following in your [Supabase SQL editor](https://supabase.com/dashboard/project/_/sql):
+
+```sql
+CREATE TABLE user_profiles (
+  id uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+  plaid_access_token text,
+  plaid_item_id text,
+  monthly_income numeric,
+  rent numeric,
+  utilities numeric,
+  other_fixed numeric,
+  monthly_savings numeric,
+  updated_at timestamptz DEFAULT now()
+);
+ALTER TABLE user_profiles ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own profile" ON user_profiles FOR ALL USING (auth.uid() = id);
+
+CREATE TABLE spending_goals (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  category text NOT NULL,
+  monthly_limit numeric,
+  avoid boolean DEFAULT false,
+  enabled boolean DEFAULT false,
+  UNIQUE(user_id, category)
+);
+ALTER TABLE spending_goals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own goals" ON spending_goals FOR ALL USING (auth.uid() = user_id);
+
+CREATE TABLE savings_goals (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  name text NOT NULL,
+  target_amount numeric NOT NULL,
+  current_amount numeric NOT NULL DEFAULT 0,
+  deadline date,
+  emoji text DEFAULT '🎯',
+  created_at timestamptz DEFAULT now()
+);
+ALTER TABLE savings_goals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own savings goals" ON savings_goals FOR ALL USING (auth.uid() = user_id);
+
+CREATE TABLE transaction_notes (
+  id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id uuid REFERENCES auth.users(id) ON DELETE CASCADE,
+  transaction_id text NOT NULL,
+  note text NOT NULL DEFAULT '',
+  tag text,
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(user_id, transaction_id)
+);
+ALTER TABLE transaction_notes ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Users manage own notes" ON transaction_notes FOR ALL USING (auth.uid() = user_id);
+```
+
+### 3. Run locally
+
+**Backend** (port 8000):
 ```bash
-git clone git@github.com:plaid/quickstart.git
-cd quickstart
+cd java && mvn package -DskipTests && ./start.sh
 ```
 
-#### Special instructions for Windows
-
-Note - because this repository makes use of symbolic links, to run this on a Windows machine, make sure you have checked the "enable symbolic links" box when you download Git to your local machine. Then you can run the above commands to clone the quickstart. Otherwise, you may open your Git Bash terminal as an administrator and use the following command when cloning the project
-
+**Frontend** (port 3000):
 ```bash
-git clone -c core.symlinks=true https://github.com/plaid/quickstart
+cd frontend && npm install && npm start
 ```
 
-## 2. Set up your environment variables
+Open [http://localhost:3000](http://localhost:3000).
 
-```bash
-cp .env.example .env
-```
+---
 
-Copy `.env.example` to a new file called `.env` and fill out the environment variables inside. At
-minimum `PLAID_CLIENT_ID` and `PLAID_SECRET` must be filled out. Get your Client ID and secrets from
-the dashboard: [https://dashboard.plaid.com/developers/keys](https://dashboard.plaid.com/developers/keys)
+## Features
 
-> NOTE: `.env` files are a convenient local development tool. Never run a production application
-> using an environment file with secrets in it.
+- **Auth** — Google OAuth + magic link via Supabase
+- **Bank connection** — one-time Plaid Link setup, persisted across sessions
+- **Overview** — account balances, net worth, stat cards, 6-month spending trend, category breakdown, cash flow projection
+- **Transactions** — searchable/filterable list with inline notes, tags, and CSV export
+- **Budgets** — per-category monthly limits with discretionary budget tracker
+- **Goals** — savings goal tracker with progress bars and deadline reminders
+- **Account** — income and fixed expense settings for budget calculations
 
-## 3. Run the Quickstart
+---
 
-### Pre-requisites
+## Plaid Sandbox
 
-- The language you intend to use is installed on your machine and available at your command line.
-  This repo should generally work with active LTS versions of each language such as node >= 18,
-  python >= 3.8, ruby >= 2.6, etc.
-- Your environment variables populated in `.env`
-- [npm](https://www.npmjs.com/get-npm)
-- If using Windows, a command line utility capable of running basic Unix shell commands
+Use these credentials when testing with Plaid Link:
 
-#### 1. Running the backend
+| Field | Value |
+|---|---|
+| Username | `user_good` |
+| Password | `pass_good` |
 
-Once started with one of the commands below, the quickstart will be running on http://localhost:8000 for the backend. Enter the additional commands in step 2 to run the frontend which will run on http://localhost:3000.
+---
 
-##### Node
+## Environment Variables
 
-```bash
-$ cd ./node
-$ npm install
-$ ./start.sh
-```
+### `java/.env`
 
-##### Python
+| Variable | Description |
+|---|---|
+| `PLAID_CLIENT_ID` | From [Plaid Dashboard](https://dashboard.plaid.com/team/keys) |
+| `PLAID_SECRET` | Sandbox or production secret |
+| `PLAID_ENV` | `sandbox` or `production` |
+| `PLAID_PRODUCTS` | `auth,transactions,signal` |
+| `PLAID_COUNTRY_CODES` | `US,CA` |
+| `SUPABASE_URL` | Your Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (server-side only, never expose to browser) |
 
-**:warning: As `python2` has reached its end of life, only `python3` is supported.**
+### `frontend/.env.local`
 
-```bash
-cd ./python
+| Variable | Description |
+|---|---|
+| `VITE_SUPABASE_URL` | Same Supabase project URL |
+| `VITE_SUPABASE_ANON_KEY` | Public anon key (safe for browser) |
 
-# If you use virtualenv
-# virtualenv venv
-# source venv/bin/activate
+---
 
-pip3 install -r requirements.txt
-./start.sh
-```
+## License
 
-If you get this error message:
-
-```txt
-ssl.SSLError: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed (_ssl.c:749)
-```
-
-You may need to run the following command in your terminal for your particular version of python in order to install SSL certificates:
-
-```bash
-# examples:
-open /Applications/Python\ 3.9/Install\ Certificates.command
-# or
-open /Applications/Python\ 3.6/Install\ Certificates.command
-```
-
-##### Ruby
-
-```bash
-cd ./ruby
-bundle
-./start.sh
-```
-
-##### Go
-
-```bash
-cd ./go
-go build
-./start.sh
-```
-
-##### Java
-
-```bash
-cd ./java
-mvn clean package
-./start.sh
-```
-
-##### .NET
-
-A community-supported implementation of the Plaid Quickstart using the [Going.Plaid](https://github.com/viceroypenguin/Going.Plaid) client library can be found at [PlaidQuickstartBlazor](https://github.com/jcoliz/PlaidQuickstartBlazor). Note that Plaid does not provide first-party support for .NET client libraries and that this Quickstart and client library are not created, reviewed, or supported by Plaid. 
-
-#### 2. Running the frontend
-
-```bash
-cd ./frontend
-npm ci
-npm start
-```
-
-## Test credentials
-
-In Sandbox, you can log in to any supported institution using `user_good` as the username and `pass_good` as the password. If prompted to enter a 2-factor authentication code, enter `1234`. In Production, use real-life credentials.
-
-### Transactions test credentials
-For Transactions, you will get the most realistic results using a non-OAuth test institution such as First Platypus Bank with `user_transactions_dynamic` as the username, and any non-blank string as the password. For more details on the special capabilities of this test user, see the [docs](https://plaid.com/docs/transactions/transactions-data/#testing-pending-and-posted-transactions).
-
-### Credit test credentials
-For credit and underwriting products like Assets and Statements, you will get the most realistic results using one of the [credit and underwriting tests credentials](https://plaid.com/docs/sandbox/test-credentials/#credit-and-income-testing-credentials), like `user_bank_income` / `{}`.
-
-## Troubleshooting
-
-### Link fails in Production with "something went wrong" / `INVALID_SERVER_ERROR` but works in Sandbox
-
-If Link works in Sandbox but fails in Production, the error is most likely one of the following:
-1) You need to set a use case for Link, which you can do in the Plaid Dashboard under [Link -> Customization -> Data Transparency Messaging](https://dashboard.plaid.com/link/data-transparency-v5).
-2) You don't yet have OAuth access for the institution you selected. This is especially common if the institution is Chase or Charles Schwab, which have longer OAuth registration turnarounds. To check your OAuth registration status and see if you have any required action items, see the [US OAuth Institutions page](https://dashboard.plaid.com/settings/compliance/us-oauth-institutions) in the Dashboard.
-   
-### Can't get a link token, or API calls are 400ing
-
-View the server logs to see the associated error message with detailed troubleshooting instructions. If you can't view logs locally, view them via the [Dashboard activity logs](https://dashboard.plaid.com/activity/logs). 
-
-### Works only when `PLAID_REDIRECT_URI` is not specified
-Make sure to add the redirect URI to the Allowed Redirect URIs list in the [Plaid Dashboard](https://dashboard.plaid.com/team/api).
-
-### "Connectivity not supported"
-
-If you get a "Connectivity not supported" error after selecting a financial institution in Link, you probably specified some products in your .env file that the target financial institution doesn't support. Remove the unsupported products and try again.
-
-### "You need to update your app" or "institution not supported"
-
-If you get a "You need to update your app" or "institution not supported" error after selecting a financial institution in Link, you're probably running the Quickstart in Production and attempting to link an institution, such as Chase or Wells Fargo, that requires an OAuth-based connection. In order to make OAuth connections to US-based institutions in Production, you must have full Production access approval, and certain institutions may also require additional approvals before you can be enabled. To use this institution, [apply for full Production access](https://dashboard.plaid.com/overview/production) and see the [OAuth insitutions page](https://dashboard.plaid.com/team/oauth-institutions) for any other required steps and to track your OAuth enablement status.
-
-### "oauth uri does not contain a valid oauth_state_id query parameter"
-
-If you get the console error "oauth uri does not contain a valid oauth_state_id query parameter", you are attempting to initialize Link with a redirect uri when it is not necessary to do so. The `receivedRedirectUri` should not be set when initializing Link for the first time. It is used when initializing Link for the second time, after returning from the OAuth redirect.
-
-### Testing OAuth with a redirect URI (optional)
-
-To test the OAuth flow in Sandbox with a [redirect URI](https://www.plaid.com/docs/link/oauth/#create-and-register-a-redirect-uri), you should set `PLAID_REDIRECT_URI=http://localhost:3000/` in `.env`. You will also need to register this localhost redirect URI in the
-[Plaid dashboard under Developers > API > Allowed redirect URIs][dashboard-api-section]. It is not required to configure a redirect URI in the .env file to use OAuth with the Quickstart, since redirect URIs are only needed for mobile clients (recommended for best conversion on mobile web, and required when using a Plaid mobile SDK). 
-
-#### Instructions for using https with localhost
-
-If you want to test OAuth in Production with a redirect URI, you need to use https and set `PLAID_REDIRECT_URI=https://localhost:3000/` in `.env`. In order to run your localhost on https, you will need to create a self-signed certificate and add it to the frontend root folder. You can use the following instructions to do this. Note that self-signed certificates should be used for testing purposes only, never for actual deployments.
-
-In your terminal, change to the frontend folder:
-
-```bash
-cd frontend
-```
-
-Use homebrew to install mkcert:
-
-```bash
-brew install mkcert
-```
-
-Then create your certificate for localhost:
-
-```bash
-mkcert -install
-mkcert localhost
-```
-
-This will create a certificate file localhost.pem and a key file localhost-key.pem inside your client folder.
-
-Then in `frontend/vite.config.ts`, add the `https` option to the `server` config:
-
-```ts
-import fs from "fs";
-
-// inside the server config:
-server: {
-  port: 3000,
-  https: {
-    cert: fs.readFileSync("localhost.pem"),
-    key: fs.readFileSync("localhost-key.pem"),
-  },
-  // ... existing proxy config
-},
-```
-
-After starting up the Quickstart, you can now view it at https://localhost:3000. If you are on Windows, you
-may still get an invalid certificate warning on your browser. If so, click on "advanced" and proceed. Also on Windows, the frontend may still try to load http://localhost:3000 and you may have to access https://localhost:3000 manually.
-
-[quickstart]: https://plaid.com/docs/quickstart
-[libraries]: https://plaid.com/docs/api/libraries
-[payment-initiation]: https://plaid.com/docs/payment-initiation/
-[node-example]: /node
-[ruby-example]: /ruby
-[python-example]: /python
-[java-example]: /java
-[go-example]: /go
-[dashboard-api-section]: https://dashboard.plaid.com/developers/api
-[contact-sales]: https://plaid.com/contact
+MIT

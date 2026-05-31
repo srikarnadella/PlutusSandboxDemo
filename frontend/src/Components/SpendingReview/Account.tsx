@@ -150,7 +150,7 @@ const Account = ({ income, user, onUpdateIncome, onSave, onSignOut }: AccountPro
             <button
               onClick={handleSave}
               style={{
-                background: saved ? "rgba(52,211,153,0.15)" : "#4f46e5",
+                background: saved ? "rgba(52,211,153,0.12)" : "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
                 border: saved ? "1px solid rgba(52,211,153,0.3)" : "none",
                 color: saved ? "#34d399" : "#fff",
                 fontWeight: 700,

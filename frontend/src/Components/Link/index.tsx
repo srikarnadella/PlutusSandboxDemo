@@ -118,30 +118,30 @@ const Link = () => {
         display: "inline-flex",
         alignItems: "center",
         gap: "1rem",
-        background: ready ? "#4f46e5" : "rgba(99,102,241,0.3)",
-        color: ready ? "#fff" : "rgba(255,255,255,0.4)",
+        background: ready ? "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)" : "rgba(99,102,241,0.2)",
+        color: ready ? "#fff" : "rgba(255,255,255,0.35)",
         fontWeight: 700,
-        padding: "1.6rem 4rem",
+        padding: "1.6rem 4.4rem",
         borderRadius: "1.4rem",
         border: "none",
         fontSize: "1.8rem",
         cursor: ready ? "pointer" : "not-allowed",
         transition: "all 0.2s",
-        boxShadow: ready ? "0 8px 40px rgba(99,102,241,0.35)" : undefined,
+        boxShadow: ready ? "0 8px 40px rgba(99,102,241,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset" : undefined,
         letterSpacing: "-0.01em",
       }}
       onMouseEnter={(e) => {
         if (ready) {
-          (e.currentTarget as HTMLButtonElement).style.background = "#4338ca";
+          (e.currentTarget as HTMLButtonElement).style.opacity = "0.9";
           (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
-          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 12px 48px rgba(99,102,241,0.45)";
+          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 16px 56px rgba(99,102,241,0.55), 0 0 0 1px rgba(255,255,255,0.08) inset";
         }
       }}
       onMouseLeave={(e) => {
         if (ready) {
-          (e.currentTarget as HTMLButtonElement).style.background = "#4f46e5";
+          (e.currentTarget as HTMLButtonElement).style.opacity = "1";
           (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
-          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 40px rgba(99,102,241,0.35)";
+          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 40px rgba(99,102,241,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset";
         }
       }}
     >

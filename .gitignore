@@ -48,6 +48,14 @@ docker-compose.local*.yml
 
 *.iml
 .env
+.env.*
+!.env.example
+!.env.local.example
+java/.env
+java/.env.*
+!java/.env.example
+frontend/.env.local
+frontend/.env.local.*
 .idea
 
 #vscode

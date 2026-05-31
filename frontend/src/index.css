@@ -21,8 +21,8 @@
 }
 
 @theme {
-  --font-sans: Cern, Helvetica, Arial, sans-serif;
-  --font-mono: Inconsolata, Consolas, Courier, monospace;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', Inconsolata, Consolas, monospace;
   --color-black-100: #fafafa;
   --color-black-200: #f6f6f6;
   --color-black-300: #ededed;
@@ -124,4 +124,15 @@
     padding: 0.2rem 0.4rem;
     color: var(--color-black-1000);
   }
+
+  button { cursor: pointer; }
+
+  /* Thin dark scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 9999px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+  /* Smooth number transitions for financial data */
+  .tabular-nums { font-variant-numeric: tabular-nums; }
 }

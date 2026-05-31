@@ -96,7 +96,7 @@ const Goals = ({ goalsData, user, onUpdate }: GoalsProps) => {
         </div>
         <button
           onClick={() => { setShowForm(true); setEditingId(null); }}
-          style={{ background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1rem 2.4rem", borderRadius: "1.1rem", border: "none", cursor: "pointer", boxShadow: "0 6px 24px rgba(99,102,241,0.3)" }}
+          style={{ background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1rem 2.4rem", borderRadius: "1.1rem", border: "none", cursor: "pointer", boxShadow: "0 6px 24px rgba(99,102,241,0.3)" }}
         >
           + Add Goal
         </button>
@@ -159,7 +159,7 @@ const Goals = ({ goalsData, user, onUpdate }: GoalsProps) => {
           <p style={{ margin: "0 0 0.6rem", fontSize: "2rem", fontWeight: 700, color: "#f8fafc" }}>No goals yet</p>
           <p style={{ margin: "0 0 2.8rem", fontSize: "1.5rem", color: "#475569" }}>Set a savings target — vacation, emergency fund, new gear — and track your progress.</p>
           <button onClick={() => setShowForm(true)}
-            style={{ background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1.2rem 3.2rem", borderRadius: "1.1rem", border: "none", cursor: "pointer" }}>
+            style={{ background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1.2rem 3.2rem", borderRadius: "1.1rem", border: "none", cursor: "pointer" }}>
             Create your first goal
           </button>
         </div>
@@ -242,7 +242,7 @@ const Goals = ({ goalsData, user, onUpdate }: GoalsProps) => {
                         style={{ flex: 1, height: "4rem", background: "rgba(255,255,255,0.06)", border: "1px solid rgba(99,102,241,0.4)", borderRadius: "0.8rem", padding: "0 1.2rem", fontSize: "1.5rem", color: "#f8fafc", outline: "none", fontFamily: "inherit" }}
                       />
                       <button onClick={() => handleAddFunds(goal)}
-                        style={{ height: "4rem", padding: "0 1.6rem", background: "#4f46e5", color: "#fff", fontWeight: 700, fontSize: "1.4rem", borderRadius: "0.8rem", border: "none", cursor: "pointer" }}>
+                        style={{ height: "4rem", padding: "0 1.6rem", background: "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)", color: "#fff", fontWeight: 700, fontSize: "1.4rem", borderRadius: "0.8rem", border: "none", cursor: "pointer" }}>
                         Add
                       </button>
                       <button onClick={() => { setAddFundsId(null); setAddFundsAmt(""); }}
