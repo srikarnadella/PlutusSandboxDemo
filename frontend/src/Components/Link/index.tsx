@@ -3,6 +3,7 @@ import { usePlaidLink } from "react-plaid-link";
 
 import Context from "../../Context";
 import { supabase } from "../../lib/supabase";
+import { apiFetch } from "../../lib/apiFetch";
 
 const Link = () => {
   const { linkToken, isPaymentInitiation, isCraProductsExclusively, dispatch, supabaseUser } =
@@ -33,24 +34,21 @@ const Link = () => {
   );
 
   const onSuccess = React.useCallback(
-    async (public_token: string) => {
+    async (public_token: string, metadata: any) => {
       const exchangePublicTokenForAccessToken = async () => {
-        const response = await fetch("/api/set_access_token", {
+        const response = await apiFetch("/api/set_access_token", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             public_token: public_token,
             user_id: supabaseUser?.id ?? "",
+            institution_name: metadata?.institution?.name ?? "",
+            institution_id: metadata?.institution?.institution_id ?? "",
           }),
         });
         if (!response.ok) {
           dispatch({
             type: "SET_STATE",
-            state: {
-              itemId: `no item_id retrieved`,
-              accessToken: `no access_token retrieved`,
-              isItemAccess: false,
-            },
+            state: { itemId: null, accessToken: null, isItemAccess: false },
           });
           return;
         }
@@ -67,23 +65,22 @@ const Link = () => {
           type: "SET_STATE",
           state: {
             itemId: data.item_id,
-            accessToken: data.access_token,
             isItemAccess: true,
             hasPlaidConnection: true,
+            linkSuccess: true,
           },
         });
       };
 
       if (isPaymentInitiation) {
-        dispatch({ type: "SET_STATE", state: { isItemAccess: false } });
+        dispatch({ type: "SET_STATE", state: { isItemAccess: false, linkSuccess: true } });
       } else if (isCraProductsExclusively) {
-        dispatch({ type: "SET_STATE", state: { isItemAccess: false } });
+        dispatch({ type: "SET_STATE", state: { isItemAccess: false, linkSuccess: true } });
       } else {
         await exchangePublicTokenForAccessToken();
       }
 
-      dispatch({ type: "SET_STATE", state: { linkSuccess: true } });
-      window.history.pushState("", "", "/");
+      window.history.pushState("", "", "/dashboard");
     },
     [dispatch, isPaymentInitiation, isCraProductsExclusively, supabaseUser]
   );
@@ -118,7 +115,7 @@ const Link = () => {
         display: "inline-flex",
         alignItems: "center",
         gap: "1rem",
-        background: ready ? "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)" : "rgba(99,102,241,0.2)",
+        background: ready ? "linear-gradient(135deg, #047857 0%, #059669 100%)" : "rgba(5,150,105,0.2)",
         color: ready ? "#fff" : "rgba(255,255,255,0.35)",
         fontWeight: 700,
         padding: "1.6rem 4.4rem",
@@ -127,21 +124,21 @@ const Link = () => {
         fontSize: "1.8rem",
         cursor: ready ? "pointer" : "not-allowed",
         transition: "all 0.2s",
-        boxShadow: ready ? "0 8px 40px rgba(99,102,241,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset" : undefined,
+        boxShadow: ready ? "0 8px 40px rgba(5,150,105,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset" : undefined,
         letterSpacing: "-0.01em",
       }}
       onMouseEnter={(e) => {
         if (ready) {
           (e.currentTarget as HTMLButtonElement).style.opacity = "0.9";
           (e.currentTarget as HTMLButtonElement).style.transform = "translateY(-2px)";
-          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 16px 56px rgba(99,102,241,0.55), 0 0 0 1px rgba(255,255,255,0.08) inset";
+          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 16px 56px rgba(5,150,105,0.55), 0 0 0 1px rgba(255,255,255,0.08) inset";
         }
       }}
       onMouseLeave={(e) => {
         if (ready) {
           (e.currentTarget as HTMLButtonElement).style.opacity = "1";
           (e.currentTarget as HTMLButtonElement).style.transform = "translateY(0)";
-          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 40px rgba(99,102,241,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset";
+          (e.currentTarget as HTMLButtonElement).style.boxShadow = "0 8px 40px rgba(5,150,105,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset";
         }
       }}
     >

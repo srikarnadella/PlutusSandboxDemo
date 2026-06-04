@@ -1,32 +1,46 @@
 package com.plaid.quickstart.resources;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.plaid.client.model.AccountsBalanceGetRequest;
 import com.plaid.client.model.AccountsGetResponse;
+import com.plaid.client.model.RemovedTransaction;
 import com.plaid.client.model.Transaction;
 import com.plaid.client.model.TransactionsSyncRequest;
 import com.plaid.client.model.TransactionsSyncResponse;
 import com.plaid.client.request.PlaidApi;
+import com.plaid.quickstart.JwtValidator;
 import com.plaid.quickstart.PlaidApiHelper;
 import com.plaid.quickstart.QuickstartApplication;
+import com.plaid.quickstart.SupabaseService;
 
 import javax.ws.rs.Consumes;
+import javax.ws.rs.HeaderParam;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
+import javax.ws.rs.WebApplicationException;
 import javax.ws.rs.core.MediaType;
+import javax.ws.rs.core.Response;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,13 +49,88 @@ import org.slf4j.LoggerFactory;
 @Produces(MediaType.APPLICATION_JSON)
 public class SpendingReviewResource {
   private static final Logger LOG = LoggerFactory.getLogger(SpendingReviewResource.class);
-  private final PlaidApi plaidClient;
+  private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final TypeReference<List<StoredTx>> TX_LIST_TYPE = new TypeReference<List<StoredTx>>() {};
 
-  public SpendingReviewResource(PlaidApi plaidClient) {
-    this.plaidClient = plaidClient;
+  // How long a Supabase transaction cache entry is considered fresh before a delta sync is needed
+  private static final long CACHE_FRESH_MINUTES = 30;
+
+  private final PlaidApi plaidClient;
+  private final JwtValidator jwtValidator;
+
+  // ── In-memory caches ──────────────────────────────────────────────────────
+  public static final Map<String, CachedTransactions> TRANSACTION_CACHE = new ConcurrentHashMap<>();
+
+  // Items list cache — avoids a Supabase round-trip on every spending_review call
+  public static final Map<String, CachedItems> ITEMS_CACHE = new ConcurrentHashMap<>();
+
+  private static class CachedItems {
+    final List<SupabaseService.PlaidItem> items;
+    private final Instant cachedAt;
+    CachedItems(List<SupabaseService.PlaidItem> items) { this.items = items; this.cachedAt = Instant.now(); }
+    boolean isStale() { return Duration.between(cachedAt, Instant.now()).toMinutes() >= 5; }
   }
 
-  // ── Request / inner model classes ──────────────────────────────────────────
+  // Account balance cache — Plaid balance call is ~300 ms; 2-minute TTL is fine for a dashboard
+  public static final Map<String, CachedBalances> BALANCE_CACHE = new ConcurrentHashMap<>();
+
+  private static class CachedBalances {
+    final List<AccountSummary> accounts;
+    private final Instant cachedAt;
+    CachedBalances(List<AccountSummary> accounts) { this.accounts = accounts; this.cachedAt = Instant.now(); }
+    boolean isStale() { return Duration.between(cachedAt, Instant.now()).toSeconds() >= 120; }
+  }
+
+  public static class CachedTransactions {
+    public final List<StoredTx> transactions;
+    public final Instant syncedAt;     // when data was last fetched from Plaid
+    private final Instant cachedAt;    // when this entry was put in memory
+
+    public CachedTransactions(List<StoredTx> txns, Instant syncedAt) {
+      this.transactions = txns;
+      this.syncedAt = syncedAt != null ? syncedAt : Instant.now();
+      this.cachedAt = Instant.now();
+    }
+
+    public boolean isStale() {
+      return Duration.between(cachedAt, Instant.now()).toMinutes() >= 5;
+    }
+  }
+
+  // ── Minimal serializable transaction (avoids storing the full Plaid SDK object) ──
+  public static class StoredTx {
+    @JsonProperty public String tid;   // transaction_id
+    @JsonProperty public String name;
+    @JsonProperty public String merch; // merchant_name
+    @JsonProperty public double amt;
+    @JsonProperty public String dt;    // ISO date "YYYY-MM-DD"
+    @JsonProperty public List<String> cats;
+    @JsonProperty public String logo;
+  }
+
+  // ── Helper: convert Plaid Transaction → StoredTx ──────────────────────────
+  private static StoredTx toStoredTx(Transaction t) {
+    StoredTx s = new StoredTx();
+    s.tid   = t.getTransactionId();
+    s.name  = t.getName();
+    s.merch = t.getMerchantName();
+    s.amt   = t.getAmount() != null ? t.getAmount() : 0;
+    s.dt    = t.getDate() != null ? t.getDate().toString() : null;
+    s.cats  = t.getCategory();
+    s.logo  = t.getLogoUrl();
+    return s;
+  }
+
+  private static YearMonth ym(StoredTx t) {
+    if (t.dt == null) return null;
+    return YearMonth.from(LocalDate.parse(t.dt));
+  }
+
+  private static String displayName(StoredTx t) {
+    return (t.merch != null && !t.merch.isEmpty()) ? t.merch : (t.name != null ? t.name : "Unknown");
+  }
+
+  // ── Request/response model classes ────────────────────────────────────────
 
   public static class BudgetGoal {
     @JsonProperty public String category;
@@ -60,41 +149,30 @@ public class SpendingReviewResource {
     @JsonProperty public String name;
     @JsonProperty public double amount;
     @JsonProperty public String date;
-
     SimpleTransaction(String name, double amount, String date) {
-      this.name = name;
-      this.amount = amount;
-      this.date = date;
+      this.name = name; this.amount = amount; this.date = date;
     }
   }
 
   public static class UnusualTransaction extends SimpleTransaction {
     @JsonProperty public List<String> category;
     @JsonProperty public String reason;
-
-    UnusualTransaction(String name, double amount, String date, List<String> category, String reason) {
-      super(name, amount, date);
-      this.category = category;
-      this.reason = reason;
+    UnusualTransaction(String name, double amount, String date, List<String> cats, String reason) {
+      super(name, amount, date); this.category = cats; this.reason = reason;
     }
   }
 
   public static class GoalViolation {
     @JsonProperty public String category;
     @JsonProperty("monthly_limit") public double monthly_limit;
-    @JsonProperty("amount_spent") public double amount_spent;
-    @JsonProperty("over_by") public double over_by;
+    @JsonProperty("amount_spent")  public double amount_spent;
+    @JsonProperty("over_by")       public double over_by;
     @JsonProperty public List<SimpleTransaction> transactions;
     @JsonProperty("is_avoid_category") public boolean is_avoid_category;
-
-    GoalViolation(String category, double monthlyLimit, double amountSpent,
-                  double overBy, List<SimpleTransaction> transactions, boolean isAvoidCategory) {
-      this.category = category;
-      this.monthly_limit = monthlyLimit;
-      this.amount_spent = amountSpent;
-      this.over_by = overBy;
-      this.transactions = transactions;
-      this.is_avoid_category = isAvoidCategory;
+    GoalViolation(String cat, double limit, double spent, double over,
+                  List<SimpleTransaction> txs, boolean isAvoid) {
+      this.category = cat; this.monthly_limit = limit; this.amount_spent = spent;
+      this.over_by = over; this.transactions = txs; this.is_avoid_category = isAvoid;
     }
   }
 
@@ -102,23 +180,17 @@ public class SpendingReviewResource {
     @JsonProperty("transactions_analyzed") public int transactions_analyzed;
     @JsonProperty("total_spent") public double total_spent;
     @JsonProperty public String period;
-
-    ReviewStats(int analyzed, double totalSpent, String period) {
-      this.transactions_analyzed = analyzed;
-      this.total_spent = totalSpent;
-      this.period = period;
+    ReviewStats(int n, double spent, String period) {
+      this.transactions_analyzed = n; this.total_spent = spent; this.period = period;
     }
   }
 
   public static class MerchantSummary {
     @JsonProperty public String name;
     @JsonProperty("total_amount") public double total_amount;
-    @JsonProperty("visit_count") public int visit_count;
-
-    MerchantSummary(String name, double totalAmount, int visitCount) {
-      this.name = name;
-      this.total_amount = totalAmount;
-      this.visit_count = visitCount;
+    @JsonProperty("visit_count")  public int visit_count;
+    MerchantSummary(String name, double amt, int visits) {
+      this.name = name; this.total_amount = amt; this.visit_count = visits;
     }
   }
 
@@ -126,26 +198,18 @@ public class SpendingReviewResource {
     @JsonProperty public String name;
     @JsonProperty public double amount;
     @JsonProperty public String frequency;
-    @JsonProperty("last_date") public String last_date;
+    @JsonProperty("last_date")       public String last_date;
     @JsonProperty("months_detected") public int months_detected;
-
-    SubscriptionItem(String name, double amount, String frequency, String lastDate, int monthsDetected) {
-      this.name = name;
-      this.amount = amount;
-      this.frequency = frequency;
-      this.last_date = lastDate;
-      this.months_detected = monthsDetected;
+    SubscriptionItem(String name, double amt, String freq, String lastDate, int months) {
+      this.name = name; this.amount = amt; this.frequency = freq;
+      this.last_date = lastDate; this.months_detected = months;
     }
   }
 
   public static class PreviousMonthSummary {
-    @JsonProperty("total_spent") public double total_spent;
+    @JsonProperty("total_spent")           public double total_spent;
     @JsonProperty("transactions_analyzed") public int transactions_analyzed;
-
-    PreviousMonthSummary(double totalSpent, int txCount) {
-      this.total_spent = totalSpent;
-      this.transactions_analyzed = txCount;
-    }
+    PreviousMonthSummary(double spent, int n) { this.total_spent = spent; this.transactions_analyzed = n; }
   }
 
   public static class TransactionSummary {
@@ -153,32 +217,23 @@ public class SpendingReviewResource {
     @JsonProperty public double amount;
     @JsonProperty public String date;
     @JsonProperty public String category;
-    @JsonProperty("logo_url") public String logoUrl;
+    @JsonProperty("logo_url")       public String logoUrl;
     @JsonProperty("transaction_id") public String transactionId;
-
-    TransactionSummary(String name, double amount, String date, String category, String logoUrl, String transactionId) {
-      this.name = name;
-      this.amount = amount;
-      this.date = date;
-      this.category = category;
-      this.logoUrl = logoUrl;
-      this.transactionId = transactionId;
+    TransactionSummary(String name, double amount, String date, String cat, String logo, String tid) {
+      this.name = name; this.amount = amount; this.date = date;
+      this.category = cat; this.logoUrl = logo; this.transactionId = tid;
     }
   }
 
   public static class CategorySummary {
     @JsonProperty public String category;
-    @JsonProperty("amount_spent") public double amount_spent;
-    @JsonProperty("monthly_limit") public double monthly_limit;
+    @JsonProperty("amount_spent")     public double amount_spent;
+    @JsonProperty("monthly_limit")    public double monthly_limit;
     @JsonProperty public boolean avoid;
     @JsonProperty("transaction_count") public int transaction_count;
-
-    CategorySummary(String category, double amountSpent, double monthlyLimit, boolean avoid, int txCount) {
-      this.category = category;
-      this.amount_spent = amountSpent;
-      this.monthly_limit = monthlyLimit;
-      this.avoid = avoid;
-      this.transaction_count = txCount;
+    CategorySummary(String cat, double spent, double limit, boolean avoid, int n) {
+      this.category = cat; this.amount_spent = spent; this.monthly_limit = limit;
+      this.avoid = avoid; this.transaction_count = n;
     }
   }
 
@@ -190,16 +245,10 @@ public class SpendingReviewResource {
     @JsonProperty public double current;
     @JsonProperty public double available;
     @JsonProperty public double limit;
-
     AccountSummary(String name, String type, String subtype, String mask,
                    double current, double available, double limit) {
-      this.name = name;
-      this.type = type;
-      this.subtype = subtype;
-      this.mask = mask;
-      this.current = current;
-      this.available = available;
-      this.limit = limit;
+      this.name = name; this.type = type; this.subtype = subtype; this.mask = mask;
+      this.current = current; this.available = available; this.limit = limit;
     }
   }
 
@@ -208,12 +257,8 @@ public class SpendingReviewResource {
     @JsonProperty public int month;
     @JsonProperty public String label;
     @JsonProperty("total_spent") public double total_spent;
-
-    MonthlyTrend(int year, int month, String label, double totalSpent) {
-      this.year = year;
-      this.month = month;
-      this.label = label;
-      this.total_spent = totalSpent;
+    MonthlyTrend(int year, int month, String label, double spent) {
+      this.year = year; this.month = month; this.label = label; this.total_spent = spent;
     }
   }
 
@@ -223,122 +268,294 @@ public class SpendingReviewResource {
 
   public static class SpendingReviewResponse {
     @JsonProperty("unusual_transactions") public List<UnusualTransaction> unusual_transactions;
-    @JsonProperty("goal_violations") public List<GoalViolation> goal_violations;
+    @JsonProperty("goal_violations")      public List<GoalViolation> goal_violations;
     @JsonProperty public ReviewStats stats;
-    @JsonProperty("top_merchants") public List<MerchantSummary> top_merchants;
+    @JsonProperty("top_merchants")        public List<MerchantSummary> top_merchants;
     @JsonProperty public List<SubscriptionItem> subscriptions;
-    @JsonProperty("previous_month") public PreviousMonthSummary previous_month;
-    @JsonProperty("all_transactions") public List<TransactionSummary> all_transactions;
-    @JsonProperty("category_spending") public List<CategorySummary> category_spending;
+    @JsonProperty("previous_month")       public PreviousMonthSummary previous_month;
+    @JsonProperty("all_transactions")     public List<TransactionSummary> all_transactions;
+    @JsonProperty("category_spending")    public List<CategorySummary> category_spending;
     @JsonProperty public List<AccountSummary> accounts;
-    @JsonProperty("monthly_trends") public List<MonthlyTrend> monthly_trends;
+    @JsonProperty("monthly_trends")       public List<MonthlyTrend> monthly_trends;
+    @JsonProperty("synced_at")            public String synced_at;  // ISO instant — when data was last fetched from Plaid
 
     SpendingReviewResponse(List<UnusualTransaction> unusual, List<GoalViolation> violations,
                            ReviewStats stats, List<MerchantSummary> topMerchants,
-                           List<SubscriptionItem> subscriptions, PreviousMonthSummary previousMonth,
-                           List<TransactionSummary> allTransactions, List<CategorySummary> categorySpending,
-                           List<AccountSummary> accounts, List<MonthlyTrend> monthlyTrends) {
-      this.unusual_transactions = unusual;
-      this.goal_violations = violations;
-      this.stats = stats;
-      this.top_merchants = topMerchants;
-      this.subscriptions = subscriptions;
-      this.previous_month = previousMonth;
-      this.all_transactions = allTransactions;
-      this.category_spending = categorySpending;
-      this.accounts = accounts;
-      this.monthly_trends = monthlyTrends;
+                           List<SubscriptionItem> subscriptions, PreviousMonthSummary prevMonth,
+                           List<TransactionSummary> allTxns, List<CategorySummary> catSpending,
+                           List<AccountSummary> accounts, List<MonthlyTrend> trends, String syncedAt) {
+      this.unusual_transactions = unusual; this.goal_violations = violations;
+      this.stats = stats; this.top_merchants = topMerchants; this.subscriptions = subscriptions;
+      this.previous_month = prevMonth; this.all_transactions = allTxns;
+      this.category_spending = catSpending; this.accounts = accounts;
+      this.monthly_trends = trends; this.synced_at = syncedAt;
     }
+  }
+
+  public SpendingReviewResource(PlaidApi plaidClient, JwtValidator jwtValidator) {
+    this.plaidClient = plaidClient;
+    this.jwtValidator = jwtValidator;
   }
 
   // ── Endpoint ───────────────────────────────────────────────────────────────
 
   @POST
   @Consumes(MediaType.APPLICATION_JSON)
-  public SpendingReviewResponse runReview(SpendingReviewRequest request)
+  public SpendingReviewResponse runReview(
+      @HeaderParam("Authorization") String authHeader,
+      SpendingReviewRequest request)
       throws IOException, InterruptedException {
 
-    String accessToken = resolveAccessToken(request.userId);
-    List<Transaction> all = fetchAllTransactions(accessToken);
+    String userId = jwtValidator.requireUserId(authHeader);
+    List<SupabaseService.PlaidItem> items = resolveAllItems(userId);
 
-    List<Transaction> debits = all.stream()
-        .filter(t -> t.getAmount() != null && t.getAmount() > 0)
+    // Fetch transactions and account balances in parallel — they're independent Plaid calls
+    CompletableFuture<CachedTransactions> txFuture = CompletableFuture.supplyAsync(() -> {
+      try { return fetchAllTransactions(userId, items); }
+      catch (Exception e) { throw new RuntimeException(e); }
+    });
+    CompletableFuture<List<AccountSummary>> balFuture = CompletableFuture.supplyAsync(() ->
+        fetchAllAccountBalancesCached(userId, items));
+
+    CachedTransactions cache = txFuture.join();
+    List<AccountSummary> accounts = balFuture.join();
+    List<StoredTx> all = cache.transactions;
+
+    List<StoredTx> debits = all.stream()
+        .filter(t -> t.amt > 0)
         .collect(Collectors.toList());
 
     YearMonth targetMonth = (request.year != null && request.month != null)
         ? YearMonth.of(request.year, request.month)
         : YearMonth.now();
 
-    List<Transaction> thisMonthDebits = debits.stream()
-        .filter(t -> t.getDate() != null && YearMonth.from(t.getDate()).equals(targetMonth))
+    List<StoredTx> thisMonthDebits = debits.stream()
+        .filter(t -> targetMonth.equals(ym(t)))
         .collect(Collectors.toList());
 
     YearMonth prevMonth = targetMonth.minusMonths(1);
-    List<Transaction> prevMonthDebits = debits.stream()
-        .filter(t -> t.getDate() != null && YearMonth.from(t.getDate()).equals(prevMonth))
+    List<StoredTx> prevMonthDebits = debits.stream()
+        .filter(t -> prevMonth.equals(ym(t)))
         .collect(Collectors.toList());
-    PreviousMonthSummary previousMonthSummary = new PreviousMonthSummary(
-        round2(prevMonthDebits.stream()
-            .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0).sum()),
-        prevMonthDebits.size()
-    );
+    PreviousMonthSummary prevSummary = new PreviousMonthSummary(
+        round2(prevMonthDebits.stream().mapToDouble(t -> t.amt).sum()),
+        prevMonthDebits.size());
 
-    List<UnusualTransaction> unusual = detectUnusual(debits, thisMonthDebits);
-    List<GoalViolation> violations = checkGoals(request, thisMonthDebits);
-
-    double totalSpent = round2(thisMonthDebits.stream()
-        .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
-        .sum());
-
+    double totalSpent = round2(thisMonthDebits.stream().mapToDouble(t -> t.amt).sum());
     String period = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
 
-    List<MerchantSummary> topMerchants = computeTopMerchants(thisMonthDebits);
-    List<SubscriptionItem> subscriptions = detectSubscriptions(debits);
-    List<TransactionSummary> allTransactions = toTransactionSummaries(thisMonthDebits);
-    List<CategorySummary> categorySpending = computeCategorySpending(request, thisMonthDebits);
-    List<AccountSummary> accounts = fetchAccountBalances(accessToken);
-    List<MonthlyTrend> monthlyTrends = computeMonthlyTrends(debits);
-
-    return new SpendingReviewResponse(unusual, violations,
+    return new SpendingReviewResponse(
+        detectUnusual(debits, thisMonthDebits),
+        checkGoals(request, thisMonthDebits),
         new ReviewStats(thisMonthDebits.size(), totalSpent, period),
-        topMerchants, subscriptions, previousMonthSummary, allTransactions, categorySpending,
-        accounts, monthlyTrends);
+        computeTopMerchants(thisMonthDebits),
+        detectSubscriptions(debits),
+        prevSummary,
+        toTransactionSummaries(thisMonthDebits),
+        computeCategorySpending(request, thisMonthDebits),
+        accounts,
+        computeMonthlyTrends(debits, targetMonth),
+        cache.syncedAt.toString());
   }
 
-  // ── Private helpers ────────────────────────────────────────────────────────
+  // ── Token resolution ───────────────────────────────────────────────────────
 
-  private String resolveAccessToken(String userId) {
-    if (userId != null && !userId.isEmpty()) {
-      String token = QuickstartApplication.userTokens.get(userId);
-      if (token != null) return token;
+  private List<SupabaseService.PlaidItem> resolveAllItems(String userId) {
+    CachedItems cached = ITEMS_CACHE.get(userId);
+    if (cached != null && !cached.isStale()) return cached.items;
+
+    try {
+      List<SupabaseService.PlaidItem> items = QuickstartApplication.supabaseService.getItems(userId);
+      if (!items.isEmpty()) {
+        ITEMS_CACHE.put(userId, new CachedItems(items));
+        return items;
+      }
+    } catch (Exception e) {
+      LOG.warn("Could not load plaid_items for user {}: {}", userId, e.getMessage());
+    }
+
+    // Legacy fallback: single token from userTokens map or user_profiles
+    String token = QuickstartApplication.userTokens.get(userId);
+    if (token == null) {
       try {
         token = QuickstartApplication.supabaseService.getAccessToken(userId);
-        if (token != null) {
-          QuickstartApplication.userTokens.put(userId, token);
-          return token;
-        }
+        if (token != null) QuickstartApplication.userTokens.put(userId, token);
       } catch (Exception e) {
-        // fall through to global fallback
+        LOG.warn("Failed to fetch access token from Supabase for user {}: {}", userId, e.getMessage());
       }
     }
-    return QuickstartApplication.accessToken;
+    if (token != null) {
+      return List.of(new SupabaseService.PlaidItem("legacy", token, "Connected Bank", null));
+    }
+
+    throw new WebApplicationException(
+        Response.status(Response.Status.FORBIDDEN)
+            .entity("{\"error\":\"No Plaid connection found. Please connect your bank account.\"}")
+            .type("application/json").build());
   }
 
-  private List<Transaction> fetchAllTransactions(String accessToken) throws IOException, InterruptedException {
-    String cursor = null;
-    List<Transaction> added = new ArrayList<>();
+  // ── Transaction fetching with 3-tier cache ─────────────────────────────────
+
+  private CachedTransactions fetchAllTransactions(String userId,
+      List<SupabaseService.PlaidItem> items) throws IOException, InterruptedException {
+
+    // Tier 1: in-memory cache (5-min TTL — serves repeated requests without hitting Supabase)
+    CachedTransactions mem = TRANSACTION_CACHE.get(userId);
+    if (mem != null && !mem.isStale()) return mem;
+
+    // Tier 2 + 3: per-item Supabase cache + delta sync
+    List<StoredTx> merged = new ArrayList<>();
+    Instant latestSync = Instant.EPOCH;
+
+    for (SupabaseService.PlaidItem item : items) {
+      try {
+        ItemSyncResult result = fetchTransactionsForItem(userId, item);
+        merged.addAll(result.transactions);
+        if (result.syncedAt.isAfter(latestSync)) latestSync = result.syncedAt;
+      } catch (Exception e) {
+        LOG.warn("Skipping item={} for user={} — sync failed: {}", item.itemId, userId, e.getMessage());
+      }
+    }
+
+    CachedTransactions cached = new CachedTransactions(merged, latestSync);
+    TRANSACTION_CACHE.put(userId, cached);
+    return cached;
+  }
+
+  private static class ItemSyncResult {
+    final List<StoredTx> transactions;
+    final Instant syncedAt;
+    ItemSyncResult(List<StoredTx> t, Instant s) { transactions = t; syncedAt = s; }
+  }
+
+  private ItemSyncResult fetchTransactionsForItem(String userId, SupabaseService.PlaidItem item)
+      throws IOException, InterruptedException {
+
+    // Tier 2: Supabase persistent cache
+    SupabaseService.TransactionCacheEntry supaCache = null;
+    try {
+      supaCache = QuickstartApplication.supabaseService.getTransactionCache(userId, item.itemId);
+    } catch (Exception e) {
+      LOG.warn("Could not load transaction cache from Supabase for item={}: {}", item.itemId, e.getMessage());
+    }
+
+    boolean cacheIsFresh = supaCache != null
+        && Duration.between(supaCache.lastSyncedAt, Instant.now()).toMinutes() < CACHE_FRESH_MINUTES;
+
+    if (cacheIsFresh) {
+      // Serve from Supabase cache — zero Plaid API calls
+      LOG.debug("Serving from Supabase cache for item={} (last synced {})", item.itemId, supaCache.lastSyncedAt);
+      List<StoredTx> txns = deserializeTransactions(supaCache.transactionsJson);
+      return new ItemSyncResult(txns, supaCache.lastSyncedAt);
+    }
+
+    // Tier 3: Plaid delta sync (or full sync on first ever use)
+    String startCursor = supaCache != null ? supaCache.cursor : null;
+    Map<String, StoredTx> existingById = new LinkedHashMap<>();
+    if (supaCache != null) {
+      for (StoredTx t : deserializeTransactions(supaCache.transactionsJson)) {
+        if (t.tid != null) existingById.put(t.tid, t);
+      }
+    }
+
+    String action = startCursor != null ? "delta sync" : "full sync";
+    LOG.info("Plaid {} for item={} (existing={} txns)", action, item.itemId, existingById.size());
+
+    String newCursor = doSync(item.accessToken, startCursor, existingById);
+    List<StoredTx> updated = new ArrayList<>(existingById.values());
+
+    // Persist updated cache to Supabase (best-effort — don't fail the request if this errors)
+    try {
+      String json = serializeTransactions(updated);
+      QuickstartApplication.supabaseService.storeTransactionCache(userId, item.itemId, json, newCursor);
+    } catch (Exception e) {
+      LOG.warn("Could not persist transaction cache for item={}: {}", item.itemId, e.getMessage());
+    }
+
+    return new ItemSyncResult(updated, Instant.now());
+  }
+
+  /**
+   * Runs a Plaid TransactionsSync loop (delta if cursor is set, full if null).
+   * Mutates {@code byId} in-place (add/modify/remove) and returns the final cursor.
+   */
+  private String doSync(String accessToken, String startCursor, Map<String, StoredTx> byId)
+      throws IOException, InterruptedException {
+    String cursor = startCursor;
     boolean hasMore = true;
+    int retries = 0;
+
     while (hasMore) {
       TransactionsSyncRequest req = new TransactionsSyncRequest()
           .accessToken(accessToken)
           .cursor(cursor);
       TransactionsSyncResponse resp = PlaidApiHelper.callPlaid(plaidClient.transactionsSync(req));
-      cursor = resp.getNextCursor();
-      if (cursor.equals("")) { Thread.sleep(2000); continue; }
-      added.addAll(resp.getAdded());
-      hasMore = resp.getHasMore();
+
+      // New transactions
+      if (resp.getAdded() != null) {
+        for (Transaction t : resp.getAdded()) {
+          if (t.getTransactionId() != null) byId.put(t.getTransactionId(), toStoredTx(t));
+        }
+      }
+      // Updated transactions
+      if (resp.getModified() != null) {
+        for (Transaction t : resp.getModified()) {
+          if (t.getTransactionId() != null) byId.put(t.getTransactionId(), toStoredTx(t));
+        }
+      }
+      // Deleted transactions
+      if (resp.getRemoved() != null) {
+        for (RemovedTransaction r : resp.getRemoved()) {
+          if (r.getTransactionId() != null) byId.remove(r.getTransactionId());
+        }
+      }
+
+      hasMore = Boolean.TRUE.equals(resp.getHasMore());
+      String nc = resp.getNextCursor();
+      if (nc != null && !nc.isEmpty()) {
+        cursor = nc;
+        retries = 0;
+      } else if (hasMore) {
+        if (++retries > 10) {
+          LOG.warn("Plaid sync still incomplete after 10 retries — using {} transactions", byId.size());
+          break;
+        }
+        Thread.sleep(2000);
+      }
     }
-    return added;
+    return cursor;
+  }
+
+  // ── Serialization helpers ──────────────────────────────────────────────────
+
+  private String serializeTransactions(List<StoredTx> txns) throws IOException {
+    return MAPPER.writeValueAsString(txns);
+  }
+
+  private List<StoredTx> deserializeTransactions(String json) {
+    if (json == null || json.isEmpty() || "[]".equals(json)) return new ArrayList<>();
+    try {
+      return MAPPER.readValue(json, TX_LIST_TYPE);
+    } catch (Exception e) {
+      LOG.warn("Failed to deserialize transaction cache: {}", e.getMessage());
+      return new ArrayList<>();
+    }
+  }
+
+  // ── Account balances ───────────────────────────────────────────────────────
+
+  private List<AccountSummary> fetchAllAccountBalancesCached(String userId, List<SupabaseService.PlaidItem> items) {
+    CachedBalances cached = BALANCE_CACHE.get(userId);
+    if (cached != null && !cached.isStale()) return cached.accounts;
+    List<AccountSummary> accounts = fetchAllAccountBalances(items);
+    BALANCE_CACHE.put(userId, new CachedBalances(accounts));
+    return accounts;
+  }
+
+  private List<AccountSummary> fetchAllAccountBalances(List<SupabaseService.PlaidItem> items) {
+    List<AccountSummary> merged = new ArrayList<>();
+    for (SupabaseService.PlaidItem item : items) merged.addAll(fetchAccountBalances(item.accessToken));
+    return merged;
   }
 
   private List<AccountSummary> fetchAccountBalances(String accessToken) {
@@ -361,231 +578,154 @@ public class SpendingReviewResource {
     }
   }
 
-  private List<MonthlyTrend> computeMonthlyTrends(List<Transaction> debits) {
-    YearMonth curMonth = YearMonth.now();
+  // ── Analysis methods (all use StoredTx) ───────────────────────────────────
+
+  private List<MonthlyTrend> computeMonthlyTrends(List<StoredTx> debits, YearMonth anchor) {
     List<MonthlyTrend> result = new ArrayList<>();
     for (int i = 5; i >= 0; i--) {
-      YearMonth m = curMonth.minusMonths(i);
-      YearMonth mFinal = m;
+      YearMonth m = anchor.minusMonths(i);
       double total = round2(debits.stream()
-          .filter(t -> t.getDate() != null && YearMonth.from(t.getDate()).equals(mFinal))
-          .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
-          .sum());
+          .filter(t -> m.equals(ym(t)))
+          .mapToDouble(t -> t.amt).sum());
       result.add(new MonthlyTrend(m.getYear(), m.getMonthValue(),
           m.format(DateTimeFormatter.ofPattern("MMM yyyy")), total));
     }
     return result;
   }
 
-  private List<UnusualTransaction> detectUnusual(List<Transaction> allDebits,
-                                                  List<Transaction> thisMonthDebits) {
+  private List<UnusualTransaction> detectUnusual(List<StoredTx> allDebits, List<StoredTx> thisMonth) {
     if (allDebits.size() < 2) return new ArrayList<>();
-
-    double[] amounts = allDebits.stream()
-        .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
-        .toArray();
-
+    double[] amounts = allDebits.stream().mapToDouble(t -> t.amt).toArray();
     double mean = 0;
     for (double a : amounts) mean += a;
     mean /= amounts.length;
-
     double variance = 0;
     for (double a : amounts) variance += (a - mean) * (a - mean);
-    double stdDev = Math.sqrt(variance / amounts.length);
-
+    double stdDev = amounts.length > 1 ? Math.sqrt(variance / (amounts.length - 1)) : 0;
     double threshold = mean + 2 * stdDev;
     double finalMean = mean;
 
     List<UnusualTransaction> result = new ArrayList<>();
-    for (Transaction t : thisMonthDebits) {
-      double amount = t.getAmount() != null ? t.getAmount() : 0;
-      boolean outlier = amount > threshold;
-      boolean absolutelyLarge = amount > 500 && finalMean < 100;
-
+    for (StoredTx t : thisMonth) {
+      boolean outlier = t.amt > threshold;
+      boolean absolutelyLarge = t.amt > 500 && finalMean < 100;
       if (outlier || absolutelyLarge) {
-        String reason;
-        if (finalMean > 0) {
-          double mult = round1(amount / finalMean);
-          reason = String.format("%.1fx your avg transaction ($%.0f)", mult, finalMean);
-        } else {
-          reason = String.format("Unusually large: $%.2f", amount);
-        }
-        List<String> cats = t.getCategory() != null ? t.getCategory() : new ArrayList<>();
-        String dateStr = t.getDate() != null ? t.getDate().toString() : "";
-        result.add(new UnusualTransaction(t.getName(), amount, dateStr, cats, reason));
+        String reason = finalMean > 0
+            ? String.format("%.1fx your avg transaction ($%.0f)", round1(t.amt / finalMean), finalMean)
+            : String.format("Unusually large: $%.2f", t.amt);
+        result.add(new UnusualTransaction(t.name, t.amt, t.dt != null ? t.dt : "",
+            t.cats != null ? t.cats : new ArrayList<>(), reason));
       }
     }
     return result;
   }
 
-  private List<GoalViolation> checkGoals(SpendingReviewRequest request, List<Transaction> debits) {
+  private List<GoalViolation> checkGoals(SpendingReviewRequest request, List<StoredTx> debits) {
     List<GoalViolation> violations = new ArrayList<>();
-
     for (BudgetGoal goal : request.budgets) {
-      List<Transaction> matching = debits.stream()
-          .filter(t -> matchesCategory(t, goal.category))
-          .collect(Collectors.toList());
-
-      double total = round2(matching.stream()
-          .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
-          .sum());
-
+      List<StoredTx> matching = debits.stream().filter(t -> matchesCat(t.cats, goal.category)).collect(Collectors.toList());
+      double total = round2(matching.stream().mapToDouble(t -> t.amt).sum());
       if (total > goal.monthly_limit) {
         violations.add(new GoalViolation(goal.category, goal.monthly_limit, total,
             round2(total - goal.monthly_limit), toSimple(matching), false));
       }
     }
-
-    for (String avoidCat : request.avoid_categories) {
-      List<Transaction> matching = debits.stream()
-          .filter(t -> matchesCategory(t, avoidCat))
-          .collect(Collectors.toList());
-
+    for (String avoid : request.avoid_categories) {
+      List<StoredTx> matching = debits.stream().filter(t -> matchesCat(t.cats, avoid)).collect(Collectors.toList());
       if (!matching.isEmpty()) {
-        double total = round2(matching.stream()
-            .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
-            .sum());
-        violations.add(new GoalViolation(avoidCat, 0, total, total, toSimple(matching), true));
+        double total = round2(matching.stream().mapToDouble(t -> t.amt).sum());
+        violations.add(new GoalViolation(avoid, 0, total, total, toSimple(matching), true));
       }
     }
-
     return violations;
   }
 
-  private List<MerchantSummary> computeTopMerchants(List<Transaction> debits) {
+  private List<MerchantSummary> computeTopMerchants(List<StoredTx> debits) {
     Map<String, double[]> byMerchant = new HashMap<>();
-    for (Transaction t : debits) {
-      String name = (t.getMerchantName() != null && !t.getMerchantName().isEmpty())
-          ? t.getMerchantName()
-          : (t.getName() != null ? t.getName() : "Unknown");
-      double amount = t.getAmount() != null ? t.getAmount() : 0;
+    for (StoredTx t : debits) {
+      String name = displayName(t);
       byMerchant.computeIfAbsent(name, k -> new double[]{0, 0});
-      byMerchant.get(name)[0] += amount;
+      byMerchant.get(name)[0] += t.amt;
       byMerchant.get(name)[1] += 1;
     }
-
     return byMerchant.entrySet().stream()
         .map(e -> new MerchantSummary(e.getKey(), round2(e.getValue()[0]), (int) e.getValue()[1]))
         .sorted(Comparator.comparingDouble((MerchantSummary m) -> m.total_amount).reversed())
-        .limit(8)
-        .collect(Collectors.toList());
+        .limit(8).collect(Collectors.toList());
   }
 
-  private List<SubscriptionItem> detectSubscriptions(List<Transaction> allDebits) {
-    Map<String, List<Transaction>> byMerchant = new HashMap<>();
-    for (Transaction t : allDebits) {
-      if (t.getDate() == null) continue;
-      String name = (t.getMerchantName() != null && !t.getMerchantName().isEmpty())
-          ? t.getMerchantName()
-          : (t.getName() != null ? t.getName() : "Unknown");
-      byMerchant.computeIfAbsent(name, k -> new ArrayList<>()).add(t);
+  private List<SubscriptionItem> detectSubscriptions(List<StoredTx> allDebits) {
+    Map<String, List<StoredTx>> byMerchant = new HashMap<>();
+    for (StoredTx t : allDebits) {
+      if (t.dt == null) continue;
+      byMerchant.computeIfAbsent(displayName(t), k -> new ArrayList<>()).add(t);
     }
 
     List<SubscriptionItem> result = new ArrayList<>();
-
-    for (Map.Entry<String, List<Transaction>> entry : byMerchant.entrySet()) {
-      List<Transaction> txs = entry.getValue();
+    for (Map.Entry<String, List<StoredTx>> e : byMerchant.entrySet()) {
+      List<StoredTx> txs = e.getValue();
       if (txs.size() < 2) continue;
-
-      Set<YearMonth> months = txs.stream()
-          .filter(t -> t.getDate() != null)
-          .map(t -> YearMonth.from(t.getDate()))
-          .collect(Collectors.toSet());
-
+      Set<YearMonth> months = txs.stream().filter(t -> t.dt != null).map(t -> ym(t)).collect(Collectors.toSet());
       if (months.size() < 2) continue;
-
-      double avg = txs.stream()
-          .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0)
-          .average().orElse(0);
+      double avg = txs.stream().mapToDouble(t -> t.amt).average().orElse(0);
       if (avg <= 0) continue;
-
-      long consistent = txs.stream()
-          .filter(t -> t.getAmount() != null && Math.abs(t.getAmount() - avg) / avg <= 0.10)
-          .count();
-
-      if (consistent < (long)(txs.size() * 0.8)) continue;
-
-      String lastDate = txs.stream()
-          .filter(t -> t.getDate() != null)
-          .max(Comparator.comparing(Transaction::getDate))
-          .map(t -> t.getDate().toString())
-          .orElse("");
-
-      String frequency = months.size() >= 3 ? "monthly" : "recurring";
-      result.add(new SubscriptionItem(entry.getKey(), round2(avg), frequency, lastDate, months.size()));
+      long consistent = txs.stream().filter(t -> Math.abs(t.amt - avg) / avg <= 0.10).count();
+      if (consistent < (long) (txs.size() * 0.8)) continue;
+      String lastDate = txs.stream().filter(t -> t.dt != null)
+          .max(Comparator.comparing(t -> t.dt)).map(t -> t.dt).orElse("");
+      String freq = months.size() >= 3 ? "monthly" : "recurring";
+      result.add(new SubscriptionItem(e.getKey(), round2(avg), freq, lastDate, months.size()));
     }
-
     return result.stream()
         .sorted(Comparator.comparingDouble((SubscriptionItem s) -> s.amount).reversed())
-        .limit(10)
-        .collect(Collectors.toList());
+        .limit(10).collect(Collectors.toList());
   }
 
-  private boolean matchesCategory(Transaction t, String target) {
-    if (t.getCategory() == null || t.getCategory().isEmpty()) return false;
-    String lTarget = target.toLowerCase();
-    return t.getCategory().stream()
-        .anyMatch(c -> c.toLowerCase().equals(lTarget) ||
-                       c.toLowerCase().contains(lTarget) ||
-                       lTarget.contains(c.toLowerCase()));
-  }
-
-  private List<SimpleTransaction> toSimple(List<Transaction> txs) {
+  private List<TransactionSummary> toTransactionSummaries(List<StoredTx> txs) {
     return txs.stream()
-        .map(t -> new SimpleTransaction(
-            t.getName(),
-            t.getAmount() != null ? t.getAmount() : 0,
-            t.getDate() != null ? t.getDate().toString() : ""))
+        .filter(t -> t.dt != null)
+        .sorted(Comparator.comparing((StoredTx t) -> t.dt).reversed())
+        .map(t -> new TransactionSummary(displayName(t), t.amt, t.dt, primaryCat(t.cats), t.logo, t.tid))
         .collect(Collectors.toList());
   }
 
-  private String primaryCategory(Transaction t) {
-    if (t.getCategory() == null || t.getCategory().isEmpty()) return "Other";
-    List<String> cats = t.getCategory();
-    return cats.get(cats.size() - 1);
-  }
-
-  private List<TransactionSummary> toTransactionSummaries(List<Transaction> txs) {
-    return txs.stream()
-        .filter(t -> t.getDate() != null)
-        .sorted(Comparator.comparing(Transaction::getDate).reversed())
-        .map(t -> {
-          String displayName = (t.getMerchantName() != null && !t.getMerchantName().isEmpty())
-              ? t.getMerchantName()
-              : (t.getName() != null ? t.getName() : "Unknown");
-          return new TransactionSummary(
-              displayName,
-              t.getAmount() != null ? t.getAmount() : 0,
-              t.getDate().toString(),
-              primaryCategory(t),
-              t.getLogoUrl(),
-              t.getTransactionId());
-        })
-        .collect(Collectors.toList());
-  }
-
-  private List<CategorySummary> computeCategorySpending(SpendingReviewRequest request,
-                                                         List<Transaction> debits) {
+  private List<CategorySummary> computeCategorySpending(SpendingReviewRequest request, List<StoredTx> debits) {
     Map<String, Double> budgetMap = new HashMap<>();
     for (BudgetGoal g : request.budgets) budgetMap.put(g.category, g.monthly_limit);
     Set<String> avoidSet = new java.util.HashSet<>(request.avoid_categories);
-
     Set<String> allCats = new java.util.LinkedHashSet<>(PRESET_CATEGORIES);
-    budgetMap.keySet().forEach(allCats::add);
-    avoidSet.forEach(allCats::add);
+    allCats.addAll(budgetMap.keySet());
+    allCats.addAll(avoidSet);
 
     List<CategorySummary> result = new ArrayList<>();
     for (String cat : allCats) {
-      List<Transaction> matching = debits.stream()
-          .filter(t -> matchesCategory(t, cat))
-          .collect(Collectors.toList());
-      double total = round2(matching.stream()
-          .mapToDouble(t -> t.getAmount() != null ? t.getAmount() : 0).sum());
-      double limit = budgetMap.getOrDefault(cat, 0.0);
-      boolean avoid = avoidSet.contains(cat);
-      result.add(new CategorySummary(cat, total, limit, avoid, matching.size()));
+      List<StoredTx> matching = debits.stream().filter(t -> matchesCat(t.cats, cat)).collect(Collectors.toList());
+      double total = round2(matching.stream().mapToDouble(t -> t.amt).sum());
+      result.add(new CategorySummary(cat, total, budgetMap.getOrDefault(cat, 0.0), avoidSet.contains(cat), matching.size()));
     }
     return result;
+  }
+
+  // ── Category matching helpers ──────────────────────────────────────────────
+
+  private boolean matchesCat(List<String> cats, String target) {
+    if (cats == null || cats.isEmpty()) return false;
+    String lTarget = target.toLowerCase();
+    return cats.stream().anyMatch(c -> {
+      String lc = c.toLowerCase();
+      return lc.equals(lTarget) || lc.contains(lTarget) || lTarget.contains(lc);
+    });
+  }
+
+  private String primaryCat(List<String> cats) {
+    if (cats == null || cats.isEmpty()) return "Other";
+    return cats.get(cats.size() - 1);
+  }
+
+  private List<SimpleTransaction> toSimple(List<StoredTx> txs) {
+    return txs.stream()
+        .map(t -> new SimpleTransaction(t.name != null ? t.name : "Unknown", t.amt, t.dt != null ? t.dt : ""))
+        .collect(Collectors.toList());
   }
 
   private static double round2(double v) { return Math.round(v * 100.0) / 100.0; }

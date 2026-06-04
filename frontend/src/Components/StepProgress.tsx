@@ -20,7 +20,7 @@ const StepProgress = ({ current, total }: StepProgressProps) => (
               height: "1px",
               marginTop: "1.35rem",
               flexShrink: 0,
-              background: done ? "rgba(99,102,241,0.7)" : "rgba(255,255,255,0.08)",
+              background: done ? "rgba(5,150,105,0.7)" : "rgba(255,255,255,0.08)",
               transition: "background 0.3s",
             }} />
           )}
@@ -36,17 +36,17 @@ const StepProgress = ({ current, total }: StepProgressProps) => (
               fontWeight: 700,
               flexShrink: 0,
               transition: "all 0.3s",
-              background: done ? "#4f46e5" : active ? "rgba(99,102,241,0.15)" : "rgba(255,255,255,0.04)",
-              border: `2px solid ${done ? "#4f46e5" : active ? "rgba(99,102,241,0.7)" : "rgba(255,255,255,0.08)"}`,
-              color: done ? "#fff" : active ? "#a5b4fc" : "rgba(255,255,255,0.18)",
-              boxShadow: active ? "0 0 0 5px rgba(99,102,241,0.12)" : undefined,
+              background: done ? "#047857" : active ? "rgba(5,150,105,0.15)" : "rgba(255,255,255,0.04)",
+              border: `2px solid ${done ? "#047857" : active ? "rgba(5,150,105,0.7)" : "rgba(255,255,255,0.08)"}`,
+              color: done ? "#fff" : active ? "#6ee7b7" : "rgba(255,255,255,0.18)",
+              boxShadow: active ? "0 0 0 5px rgba(5,150,105,0.12)" : undefined,
             }}>
               {done ? "✓" : stepNum}
             </div>
             <span style={{
               fontSize: "1rem",
               fontWeight: active ? 600 : 400,
-              color: done ? "#6366f1" : active ? "#a5b4fc" : "rgba(255,255,255,0.15)",
+              color: done ? "#6366f1" : active ? "#6ee7b7" : "rgba(255,255,255,0.15)",
               transition: "color 0.3s",
               whiteSpace: "nowrap",
             }}>

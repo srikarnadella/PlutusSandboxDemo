@@ -1,3 +1,8 @@
+General Files:
+CLAUDE.md
+DEVLOG.md
+TODO.md
+
 # Logs
 logs
 *.log
@@ -66,3 +71,6 @@ python/venv/*
 
 # Claude Code local settings
 .claude/
+
+#Claude assets
+assets/

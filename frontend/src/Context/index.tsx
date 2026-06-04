@@ -28,7 +28,6 @@ interface QuickstartState {
     display_message: string;
     institution_name: string;
   } | null;
-  // Supabase auth
   supabaseUser: User | null;
   isAuthLoading: boolean;
   hasPlaidConnection: boolean;
@@ -104,15 +103,13 @@ export const QuickstartProvider: React.FC<{ children: ReactNode }> = (props) => 
       }
     });
 
-    // Listen for auth changes (login, logout, token refresh)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (_event, session) => {
+      (event, session) => {
         dispatch({
           type: "SET_STATE",
           state: {
             supabaseUser: session?.user ?? null,
             isAuthLoading: false,
-            // Clear Plaid state on logout
             ...(!session ? {
               linkSuccess: false,
               hasPlaidConnection: false,
@@ -120,7 +117,10 @@ export const QuickstartProvider: React.FC<{ children: ReactNode }> = (props) => 
             } : {}),
           },
         });
-        if (session?.user) {
+        // TOKEN_REFRESHED fires periodically — re-querying Supabase here risks
+        // setting hasPlaidConnection:false if the read is slow/empty, which
+        // bounces the user back to /connect. Only check on actual sign-in events.
+        if (session?.user && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
           checkPlaidConnection(session.user.id);
         }
       }
@@ -130,15 +130,19 @@ export const QuickstartProvider: React.FC<{ children: ReactNode }> = (props) => 
   }, []);
 
   const checkPlaidConnection = async (userId: string) => {
-    const { data } = await supabase
-      .from("user_profiles")
-      .select("plaid_item_id")
-      .eq("id", userId)
-      .maybeSingle();
-    dispatch({
-      type: "SET_STATE",
-      state: { hasPlaidConnection: !!(data?.plaid_item_id) },
-    });
+    try {
+      const { data } = await supabase
+        .from("user_profiles")
+        .select("plaid_item_id")
+        .eq("id", userId)
+        .maybeSingle();
+      dispatch({
+        type: "SET_STATE",
+        state: { hasPlaidConnection: !!(data?.plaid_item_id) },
+      });
+    } catch {
+      // On error leave hasPlaidConnection as-is — don't kick the user out
+    }
   };
 
   return <Provider value={{ ...state, dispatch }}>{props.children}</Provider>;

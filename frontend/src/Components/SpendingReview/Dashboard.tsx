@@ -1,9 +1,6 @@
 import React from "react";
-
-const CATEGORY_ICONS: Record<string, string> = {
-  "Food and Drink": "🍕", Shops: "🛍️", Travel: "✈️", Recreation: "🎮",
-  Healthcare: "🏥", Service: "⚙️", Transfer: "↔️", Payment: "💳",
-};
+import { CATEGORY_COLORS, MerchantAvatar } from "./shared";
+import type { ReviewResult } from "./shared";
 
 const ACCOUNT_TYPE_COLORS: Record<string, { color: string; bg: string }> = {
   checking:   { color: "#34d399", bg: "rgba(52,211,153,0.1)" },
@@ -19,27 +16,6 @@ const fmtRound = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
 interface IncomeSetup { monthlyIncome: string; rent: string; utilities: string; otherFixed: string; monthlySavings: string; }
 interface GoalRow { category: string; enabled: boolean; monthlyLimit: string; avoid: boolean; }
-interface CategorySummary { category: string; amount_spent: number; monthly_limit: number; avoid: boolean; transaction_count: number; }
-interface AllTransaction { name: string; amount: number; date: string; category: string; logo_url?: string; }
-interface MerchantSummary { name: string; total_amount: number; visit_count: number; }
-interface SubscriptionItem { name: string; amount: number; frequency: string; last_date: string; months_detected: number; }
-interface ReviewStats { transactions_analyzed: number; total_spent: number; period: string; }
-interface PreviousMonthSummary { total_spent: number; transactions_analyzed: number; }
-interface GoalViolation { category: string; monthly_limit: number; amount_spent: number; over_by: number; is_avoid_category: boolean; }
-interface AccountSummary { name: string; type: string; subtype: string; mask: string; current: number; available: number; limit: number; }
-interface MonthlyTrend { year: number; month: number; label: string; total_spent: number; }
-
-interface ReviewResult {
-  stats: ReviewStats;
-  goal_violations: GoalViolation[];
-  top_merchants: MerchantSummary[];
-  subscriptions: SubscriptionItem[];
-  previous_month: PreviousMonthSummary;
-  all_transactions: AllTransaction[];
-  category_spending: CategorySummary[];
-  accounts: AccountSummary[];
-  monthly_trends: MonthlyTrend[];
-}
 
 interface DashboardProps {
   result: ReviewResult | null;
@@ -48,11 +24,13 @@ interface DashboardProps {
   selectedYear: number;
   selectedMonth: number;
   loading: boolean;
+  refreshing?: boolean;
   error?: string | null;
   monthOptions: { year: number; month: number; label: string }[];
   onMonthChange: (yr: number, mo: number) => void;
   onSetupBudgets: () => void;
   onReconnect?: () => void;
+  onRefresh?: () => void;
 }
 
 const getGrade = (violations: number, pct: number | null) => {
@@ -64,29 +42,14 @@ const getGrade = (violations: number, pct: number | null) => {
 };
 
 const StatCard = ({ label, value, sub, subColor, bg, border }: { label: string; value: string; sub?: string; subColor?: string; bg?: string; border?: string }) => (
-  <div style={{ padding: "2.4rem 2.8rem", borderRadius: "1.6rem", background: bg ?? "rgba(255,255,255,0.04)", border: `1px solid ${border ?? "rgba(255,255,255,0.07)"}`, borderTop: `1px solid ${border ? border.replace("0.18", "0.3") : "rgba(255,255,255,0.1)"}` }}>
-    <p style={{ margin: "0 0 0.8rem", fontSize: "1.05rem", fontWeight: 700, color: "#2d3748", textTransform: "uppercase" as const, letterSpacing: "0.1em" }}>{label}</p>
+  <div style={{ padding: "2.4rem 2.8rem", borderRadius: "1.6rem", background: bg ?? "rgba(255,255,255,0.04)", border: `1px solid ${border ?? "rgba(255,255,255,0.08)"}`, borderTop: `1px solid ${border ? border.replace("0.18", "0.28") : "rgba(255,255,255,0.12)"}`, transition: "transform 0.15s, box-shadow 0.15s" }}>
+    <p style={{ margin: "0 0 0.8rem", fontSize: "1.05rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase" as const, letterSpacing: "0.1em" }}>{label}</p>
     <p style={{ margin: 0, fontSize: "3.4rem", fontWeight: 900, color: "#f8fafc", lineHeight: 1, letterSpacing: "-0.03em" }}>{value}</p>
-    {sub && <p style={{ margin: "0.6rem 0 0", fontSize: "1.3rem", fontWeight: 500, color: subColor ?? "#3d4f63" }}>{sub}</p>}
+    {sub && <p style={{ margin: "0.6rem 0 0", fontSize: "1.3rem", fontWeight: 500, color: subColor ?? "#64748b" }}>{sub}</p>}
   </div>
 );
 
-const AVATAR_COLORS = ["#6366f1", "#8b5cf6", "#06b6d4", "#10b981", "#f59e0b", "#ec4899", "#f87171", "#38bdf8"];
-const avatarColor = (name: string) => AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
-
-const MerchantAvatar = ({ name, logoUrl, size = "3.2rem" }: { name: string; logoUrl?: string | null; size?: string }) => {
-  const color = avatarColor(name);
-  if (logoUrl) {
-    return <img src={logoUrl} alt={name} style={{ width: size, height: size, borderRadius: "50%", objectFit: "contain", background: "#fff", flexShrink: 0 }} onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }} />;
-  }
-  return (
-    <div style={{ width: size, height: size, borderRadius: "50%", background: `${color}22`, border: `1px solid ${color}55`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-      <span style={{ fontSize: `calc(${size} * 0.42)`, fontWeight: 800, color, lineHeight: 1 }}>{name.charAt(0).toUpperCase()}</span>
-    </div>
-  );
-};
-
-const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading, error, monthOptions, onMonthChange, onSetupBudgets, onReconnect }: DashboardProps) => {
+const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading, refreshing, error, monthOptions, onMonthChange, onSetupBudgets, onReconnect, onRefresh }: DashboardProps) => {
   const now = new Date();
   const grossIncome = parseFloat(income.monthlyIncome) || 0;
   const discretionary = grossIncome
@@ -132,9 +95,11 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
 
   const hasGoals = goals.some((g) => g.enabled || g.avoid);
 
+  const unusualTransactions = result?.unusual_transactions ?? [];
+
   const loadingOverlay = loading && (
     <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(7,11,20,0.6)", borderRadius: "1rem", zIndex: 5 }}>
-      <div style={{ width: "3.2rem", height: "3.2rem", borderRadius: "50%", border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366f1", animation: "spin 0.8s linear infinite" }} />
+      <div style={{ width: "3.2rem", height: "3.2rem", borderRadius: "50%", border: "3px solid rgba(5,150,105,0.2)", borderTopColor: "#059669", animation: "spin 0.8s linear infinite" }} />
     </div>
   );
 
@@ -149,9 +114,39 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
           <p style={{ margin: 0, fontSize: "1.4rem", color: "#475569" }}>
             {result ? result.stats.period : "Loading your finances…"}
           </p>
+          {/* Last synced indicator */}
+          {result?.synced_at && !loading && (
+            <p style={{ margin: "0.3rem 0 0", fontSize: "1.2rem", color: "#334155" }}>
+              Data from {(() => {
+                const mins = Math.round((Date.now() - new Date((result as any).synced_at).getTime()) / 60000);
+                return mins < 1 ? "just now" : mins === 1 ? "1 min ago" : `${mins} min ago`;
+              })()}
+            </p>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "1.2rem" }}>
-          {loading && <span style={{ fontSize: "1.3rem", color: "#475569" }}>Updating…</span>}
+          {(loading || refreshing) && (
+            <span style={{ fontSize: "1.3rem", color: "#475569" }}>
+              {refreshing ? "Syncing from bank…" : "Updating…"}
+            </span>
+          )}
+          {/* Refresh button */}
+          {onRefresh && !loading && (
+            <button
+              onClick={onRefresh}
+              disabled={refreshing}
+              title="Fetch latest transactions from your bank"
+              style={{ height: "3.6rem", width: "3.6rem", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "50%", cursor: refreshing ? "not-allowed" : "pointer", opacity: refreshing ? 0.5 : 1, transition: "all 0.15s" }}
+              onMouseEnter={(e) => { if (!refreshing) { (e.currentTarget as HTMLButtonElement).style.background = "rgba(5,150,105,0.12)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(5,150,105,0.3)"; }}}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.1)"; }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={refreshing ? "#334155" : "#64748b"} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"
+                style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }}>
+                <polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" />
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+              </svg>
+            </button>
+          )}
           <select
             value={`${selectedYear}-${selectedMonth}`}
             disabled={loading}
@@ -169,15 +164,19 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
       {!loading && !result && (
         <div style={{ marginBottom: "3rem", borderRadius: "1.4rem", border: "1px solid rgba(248,113,113,0.2)", background: "rgba(248,113,113,0.07)", padding: "2.4rem 3rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2rem" }}>
           <div>
-            <p style={{ margin: "0 0 0.4rem", fontSize: "1.7rem", fontWeight: 700, color: "#f87171" }}>Bank connection unavailable</p>
+            <p style={{ margin: "0 0 0.4rem", fontSize: "1.7rem", fontWeight: 700, color: "#f87171" }}>
+              {error === "ITEM_LOGIN_REQUIRED" ? "Bank session expired" : "Bank connection unavailable"}
+            </p>
             <p style={{ margin: 0, fontSize: "1.4rem", color: "#475569" }}>
-              {error ? `Error: ${error}` : "Could not load transactions. Your bank connection may need to be refreshed."}
+              {error === "ITEM_LOGIN_REQUIRED"
+                ? "Your bank requires you to log in again. Reconnect to restore access."
+                : error ? `Error: ${error}` : "Could not load transactions. Your bank connection may need to be refreshed."}
             </p>
           </div>
           {onReconnect && (
             <button
               onClick={onReconnect}
-              style={{ flexShrink: 0, background: "linear-gradient(135deg, #4f46e5, #7c3aed)", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1rem 2.4rem", borderRadius: "1rem", border: "none", cursor: "pointer", whiteSpace: "nowrap" as const, boxShadow: "0 4px 16px rgba(99,102,241,0.35)" }}
+              style={{ flexShrink: 0, background: "linear-gradient(135deg, #047857, #059669)", color: "#fff", fontWeight: 700, fontSize: "1.5rem", padding: "1rem 2.4rem", borderRadius: "1rem", border: "none", cursor: "pointer", whiteSpace: "nowrap" as const, boxShadow: "0 4px 16px rgba(5,150,105,0.35)" }}
             >
               Reconnect bank →
             </button>
@@ -191,7 +190,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "2rem" }}>
             <h3 style={{ margin: 0, fontSize: "1.8rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.01em" }}>Accounts</h3>
             <div style={{ textAlign: "right" as const }}>
-              <p style={{ margin: "0 0 0.2rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Net Worth</p>
+              <p style={{ margin: "0 0 0.2rem", fontSize: "1.1rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase" as const, letterSpacing: "0.08em" }}>Net Worth</p>
               <p style={{ margin: 0, fontSize: "2.4rem", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, color: netWorth >= 0 ? "#34d399" : "#f87171" }}>
                 {netWorth < 0 ? "-" : ""}{fmtRound(Math.abs(netWorth))}
               </p>
@@ -206,7 +205,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.2rem" }}>
                     <div>
                       <p style={{ margin: "0 0 0.3rem", fontSize: "1.5rem", fontWeight: 700, color: "#f8fafc" }}>{a.name}</p>
-                      {a.mask && <p style={{ margin: 0, fontSize: "1.2rem", color: "#334155" }}>•••• {a.mask}</p>}
+                      {a.mask && <p style={{ margin: 0, fontSize: "1.2rem", color: "#64748b" }}>•••• {a.mask}</p>}
                     </div>
                     <span style={{ fontSize: "1.1rem", fontWeight: 700, color: chip.color, background: chip.bg, borderRadius: "9999px", padding: "0.3rem 0.9rem", textTransform: "capitalize" as const, whiteSpace: "nowrap" as const }}>
                       {a.subtype || a.type}
@@ -221,13 +220,29 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                     </p>
                   )}
                   {!isCredit && a.available > 0 && a.available !== a.current && (
-                    <p style={{ margin: "0.5rem 0 0", fontSize: "1.2rem", color: "#334155" }}>
+                    <p style={{ margin: "0.5rem 0 0", fontSize: "1.2rem", color: "#64748b" }}>
                       {fmtRound(a.available)} available
                     </p>
                   )}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+
+      {/* Budget Alerts */}
+      {!loading && violations > 0 && result?.goal_violations && (
+        <div style={{ marginBottom: "2.4rem", borderRadius: "1.4rem", border: "1px solid rgba(248,113,113,0.2)", background: "rgba(248,113,113,0.06)", padding: "2rem 2.4rem" }}>
+          <p style={{ margin: "0 0 1.2rem", fontSize: "1.5rem", fontWeight: 700, color: "#f87171" }}>
+            {violations} budget {violations === 1 ? "alert" : "alerts"} this month
+          </p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.8rem" }}>
+            {result.goal_violations.map((v, i) => (
+              <span key={i} style={{ fontSize: "1.2rem", fontWeight: 600, background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: "9999px", padding: "0.35rem 1rem", color: "#f87171" }}>
+                {v.is_avoid_category ? `${v.category} (avoid)` : `${v.category}: ${fmtRound(v.over_by)} over`}
+              </span>
+            ))}
           </div>
         </div>
       )}
@@ -265,7 +280,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                 >
                   <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-end", width: "100%", alignItems: "center", gap: "0.5rem" }}>
                     {t.total_spent > 0 && (
-                      <span style={{ fontSize: "1.15rem", fontWeight: 700, color: isSelected ? "#a5b4fc" : "#475569", whiteSpace: "nowrap" as const }}>
+                      <span style={{ fontSize: "1.15rem", fontWeight: 700, color: isSelected ? "#6ee7b7" : "#475569", whiteSpace: "nowrap" as const }}>
                         {t.total_spent >= 1000 ? `$${(t.total_spent / 1000).toFixed(1)}k` : fmtRound(t.total_spent)}
                       </span>
                     )}
@@ -273,17 +288,17 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                       style={{
                         width: "100%",
                         height: `${barPct}%`,
-                        background: isSelected ? "#6366f1" : "rgba(99,102,241,0.25)",
+                        background: isSelected ? "#059669" : "rgba(5,150,105,0.25)",
                         borderRadius: "0.5rem 0.5rem 0.2rem 0.2rem",
                         transition: "all 0.2s",
                         minHeight: t.total_spent > 0 ? "0.4rem" : "0",
-                        border: isSelected ? "1px solid rgba(99,102,241,0.6)" : "1px solid rgba(99,102,241,0.15)",
+                        border: isSelected ? "1px solid rgba(5,150,105,0.6)" : "1px solid rgba(5,150,105,0.15)",
                       }}
-                      onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = "rgba(99,102,241,0.4)"; }}
-                      onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = "rgba(99,102,241,0.25)"; }}
+                      onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = "rgba(5,150,105,0.4)"; }}
+                      onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLDivElement).style.background = "rgba(5,150,105,0.25)"; }}
                     />
                   </div>
-                  <span style={{ fontSize: "1.2rem", fontWeight: isSelected ? 700 : 400, color: isSelected ? "#a5b4fc" : "#334155", letterSpacing: "-0.01em" }}>
+                  <span style={{ fontSize: "1.2rem", fontWeight: isSelected ? 700 : 400, color: isSelected ? "#6ee7b7" : "#64748b", letterSpacing: "-0.01em" }}>
                     {shortLabel}
                   </span>
                 </div>
@@ -300,14 +315,18 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "2rem" }}>
             <h3 style={{ margin: 0, fontSize: "1.8rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.01em" }}>Spending by Category</h3>
             {!hasGoals && (
-              <button onClick={onSetupBudgets} style={{ background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)", borderRadius: "9999px", padding: "0.5rem 1.4rem", fontSize: "1.2rem", fontWeight: 600, color: "#818cf8", cursor: "pointer" }}>
+              <button onClick={onSetupBudgets} style={{ background: "rgba(5,150,105,0.12)", border: "1px solid rgba(5,150,105,0.25)", borderRadius: "9999px", padding: "0.5rem 1.4rem", fontSize: "1.2rem", fontWeight: 600, color: "#34d399", cursor: "pointer" }}>
                 Set budgets →
               </button>
             )}
           </div>
           {visibleCategories.length === 0 && !loading ? (
             <div style={{ textAlign: "center", padding: "3rem 0" }}>
-              <p style={{ fontSize: "2.4rem", margin: "0 0 0.8rem" }}>📊</p>
+              <div style={{ width: "4.8rem", height: "4.8rem", borderRadius: "1.2rem", background: "rgba(5,150,105,0.1)", border: "1px solid rgba(5,150,105,0.2)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 1.2rem" }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="20" x2="18" y2="10" /><line x1="12" y1="20" x2="12" y2="4" /><line x1="6" y1="20" x2="6" y2="14" />
+                </svg>
+              </div>
               <p style={{ margin: 0, fontSize: "1.5rem", color: "#475569" }}>No spending data for this month</p>
             </div>
           ) : (
@@ -315,17 +334,21 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
               {(visibleCategories.length > 0 ? visibleCategories : categoryData.slice(0, 6)).map((c) => {
                 const pct = c.monthly_limit > 0 ? Math.min((c.amount_spent / c.monthly_limit) * 100, 100) : 0;
                 const overLimit = c.monthly_limit > 0 && c.amount_spent > c.monthly_limit;
-                const barColor = c.avoid ? "#f87171" : pct >= 100 ? "#f87171" : pct >= 80 ? "#fbbf24" : "#6366f1";
+                const barColor = c.avoid ? "#f87171" : pct >= 100 ? "#f87171" : pct >= 80 ? "#fbbf24" : "#059669";
+                const catStyle = CATEGORY_COLORS[c.category] ?? { dot: "#64748b", bg: "rgba(100,116,139,0.12)" };
                 return (
                   <div key={c.category}>
                     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.5rem" }}>
-                      <span style={{ fontSize: "1.5rem", fontWeight: 600, color: c.amount_spent > 0 ? "#f8fafc" : "#334155" }}>
-                        {CATEGORY_ICONS[c.category] ?? ""} {c.category}
-                      </span>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
+                        <div style={{ width: "0.55rem", height: "0.55rem", borderRadius: "50%", background: catStyle.dot, flexShrink: 0 }} />
+                        <span style={{ fontSize: "1.45rem", fontWeight: 600, color: c.amount_spent > 0 ? "#f8fafc" : "#64748b" }}>
+                          {c.category}
+                        </span>
+                      </div>
                       <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
                         {overLimit && <span style={{ fontSize: "1.1rem", fontWeight: 700, color: "#f87171", background: "rgba(248,113,113,0.1)", borderRadius: "9999px", padding: "0.2rem 0.8rem" }}>over by {fmtRound(c.amount_spent - c.monthly_limit)}</span>}
-                        <span style={{ fontSize: "1.4rem", fontWeight: 700, color: c.amount_spent > 0 ? "#f8fafc" : "#334155" }}>{fmtRound(c.amount_spent)}</span>
-                        {c.monthly_limit > 0 && <span style={{ fontSize: "1.3rem", color: "#334155" }}>/ {fmtRound(c.monthly_limit)}</span>}
+                        <span style={{ fontSize: "1.4rem", fontWeight: 700, color: c.amount_spent > 0 ? "#f8fafc" : "#64748b" }}>{fmtRound(c.amount_spent)}</span>
+                        {c.monthly_limit > 0 && <span style={{ fontSize: "1.3rem", color: "#64748b" }}>/ {fmtRound(c.monthly_limit)}</span>}
                       </div>
                     </div>
                     {c.monthly_limit > 0 ? (
@@ -349,24 +372,24 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
           </h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "1.8rem" }}>
             <div>
-              <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Spent</p>
+              <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Total Spent</p>
               <p style={{ margin: 0, fontSize: "3.2rem", fontWeight: 900, color: "#f8fafc", lineHeight: 1, letterSpacing: "-0.03em" }}>{fmtRound(totalSpent)}</p>
             </div>
             {isCurrentMonth && (
               <>
                 <div style={{ width: "100%", height: "1px", background: "rgba(255,255,255,0.06)" }} />
                 <div>
-                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Daily Pace</p>
+                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Daily Pace</p>
                   <p style={{ margin: 0, fontSize: "2.4rem", fontWeight: 900, color: dailyBudget > 0 && dailyPace > dailyBudget ? "#f87171" : "#f8fafc", lineHeight: 1, letterSpacing: "-0.02em" }}>{fmtRound(dailyPace)}/day</p>
                   {dailyBudget > 0 && <p style={{ margin: "0.3rem 0 0", fontSize: "1.3rem", color: "#475569" }}>budget: {fmtRound(dailyBudget)}/day</p>}
                 </div>
                 <div>
-                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Projected</p>
+                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Projected</p>
                   <p style={{ margin: 0, fontSize: "2.4rem", fontWeight: 900, lineHeight: 1, letterSpacing: "-0.02em", color: discretionary > 0 && projectedTotal > discretionary ? "#f87171" : "#f8fafc" }}>{fmtRound(projectedTotal)}</p>
                   {discretionary > 0 && <p style={{ margin: "0.3rem 0 0", fontSize: "1.3rem", color: projectedTotal > discretionary ? "#f87171" : "#34d399" }}>{projectedTotal > discretionary ? `${fmtRound(projectedTotal - discretionary)} over` : `${fmtRound(discretionary - projectedTotal)} under`} budget</p>}
                 </div>
                 <div>
-                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Days Left</p>
+                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Days Left</p>
                   <p style={{ margin: 0, fontSize: "2.4rem", fontWeight: 900, color: "#f8fafc", lineHeight: 1 }}>{daysInMonth - dayOfMonth} <span style={{ fontSize: "1.3rem", color: "#475569", fontWeight: 500 }}>of {daysInMonth}</span></p>
                 </div>
               </>
@@ -375,7 +398,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
               <>
                 <div style={{ width: "100%", height: "1px", background: "rgba(255,255,255,0.06)" }} />
                 <div>
-                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>vs Previous Month</p>
+                  <p style={{ margin: "0 0 0.3rem", fontSize: "1.1rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>vs Previous Month</p>
                   <p style={{ margin: 0, fontSize: "2.4rem", fontWeight: 900, lineHeight: 1, color: spendDelta !== null && spendDelta > 0 ? "#f87171" : "#34d399" }}>
                     {spendDelta !== null && spendDelta > 0 ? "+" : ""}{fmtRound(spendDelta ?? 0)}
                   </p>
@@ -393,7 +416,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
         <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "1.6rem", padding: "2.4rem 2.8rem" }}>
           <h3 style={{ margin: "0 0 2rem", fontSize: "1.8rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.01em" }}>Top Merchants</h3>
           {topMerchants.length === 0 ? (
-            <p style={{ color: "#334155", fontSize: "1.4rem" }}>No data for this period</p>
+            <p style={{ color: "#64748b", fontSize: "1.4rem" }}>No data for this period</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>
               {topMerchants.slice(0, 6).map((m, i) => (
@@ -407,7 +430,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                   </div>
                   <div style={{ marginLeft: "3.8rem" }}>
                     <div style={{ width: "100%", background: "rgba(255,255,255,0.06)", borderRadius: "9999px", height: "0.5rem" }}>
-                      <div style={{ width: `${Math.round((m.total_amount / maxMerchant) * 100)}%`, background: i === 0 ? "#6366f1" : i === 1 ? "#818cf8" : "#a5b4fc", borderRadius: "9999px", height: "0.5rem", transition: "width 0.4s" }} />
+                      <div style={{ width: `${Math.round((m.total_amount / maxMerchant) * 100)}%`, background: i === 0 ? "#059669" : i === 1 ? "#818cf8" : "#6ee7b7", borderRadius: "9999px", height: "0.5rem", transition: "width 0.4s" }} />
                     </div>
                   </div>
                 </div>
@@ -423,7 +446,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
             {subTotal > 0 && <span style={{ fontSize: "1.4rem", fontWeight: 700, color: "#fbbf24" }}>{fmtRound(subTotal)}/mo</span>}
           </div>
           {subscriptions.length === 0 ? (
-            <p style={{ color: "#334155", fontSize: "1.4rem" }}>No recurring charges detected</p>
+            <p style={{ color: "#64748b", fontSize: "1.4rem" }}>No recurring charges detected</p>
           ) : (
             <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
               {subscriptions.slice(0, 6).map((sub, i) => (
@@ -432,7 +455,7 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                     <MerchantAvatar name={sub.name} size="2.8rem" />
                     <div>
                       <p style={{ margin: 0, fontSize: "1.5rem", fontWeight: 600, color: "#f8fafc" }}>{sub.name}</p>
-                      <p style={{ margin: 0, fontSize: "1.2rem", color: "#334155" }}>{sub.frequency} · {sub.months_detected}mo</p>
+                      <p style={{ margin: 0, fontSize: "1.2rem", color: "#64748b" }}>{sub.frequency} · {sub.months_detected}mo</p>
                     </div>
                   </div>
                   <span style={{ fontSize: "1.6rem", fontWeight: 800, color: "#fbbf24" }}>{fmt(sub.amount)}</span>
@@ -443,11 +466,37 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
         </div>
       </div>
 
+      {/* Unusual Charges */}
+      {!loading && unusualTransactions.length > 0 && (
+        <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(248,113,113,0.15)", borderRadius: "1.6rem", padding: "2.4rem 2.8rem", marginBottom: "3rem" }}>
+          <h3 style={{ margin: "0 0 2rem", fontSize: "1.8rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.01em" }}>
+            Unusual Charges
+          </h3>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
+            {unusualTransactions.map((tx, i) => (
+              <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "1.1rem 0", borderBottom: i < unusualTransactions.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
+                  <MerchantAvatar name={tx.name} size="2.8rem" />
+                  <div>
+                    <p style={{ margin: 0, fontSize: "1.5rem", fontWeight: 600, color: "#f8fafc" }}>{tx.name}</p>
+                    <p style={{ margin: 0, fontSize: "1.2rem", color: "#64748b" }}>{tx.reason}</p>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <p style={{ margin: 0, fontSize: "1.6rem", fontWeight: 800, color: "#f87171" }}>{fmt(tx.amount)}</p>
+                  <p style={{ margin: 0, fontSize: "1.2rem", color: "#475569" }}>{new Date(tx.date + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Recent transactions */}
       <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.07)", borderRadius: "1.6rem", padding: "2.4rem 2.8rem" }}>
         <h3 style={{ margin: "0 0 2rem", fontSize: "1.8rem", fontWeight: 800, color: "#f8fafc", letterSpacing: "-0.01em" }}>Recent Transactions</h3>
         {recentTxns.length === 0 ? (
-          <p style={{ color: "#334155", fontSize: "1.4rem" }}>No transactions for this period</p>
+          <p style={{ color: "#64748b", fontSize: "1.4rem" }}>No transactions for this period</p>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <tbody>
@@ -469,7 +518,10 @@ const Dashboard = ({ result, income, goals, selectedYear, selectedMonth, loading
                     </div>
                   </td>
                   <td style={{ padding: "1rem 1rem" }}>
-                    <span style={{ fontSize: "1.2rem", color: "#475569" }}>{CATEGORY_ICONS[tx.category] ?? ""} {tx.category || "Other"}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                      <div style={{ width: "0.5rem", height: "0.5rem", borderRadius: "50%", background: (CATEGORY_COLORS[tx.category] ?? { dot: "#64748b" }).dot, flexShrink: 0 }} />
+                      <span style={{ fontSize: "1.2rem", color: "#64748b" }}>{tx.category || "Other"}</span>
+                    </div>
                   </td>
                   <td style={{ padding: "1rem 0 1rem 1rem", textAlign: "right" as const, fontSize: "1.5rem", fontWeight: 700, color: "#f87171" }}>{fmt(tx.amount)}</td>
                 </tr>

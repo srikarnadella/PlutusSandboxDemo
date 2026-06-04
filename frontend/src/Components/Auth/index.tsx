@@ -1,5 +1,7 @@
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
+import ParticleCanvas from "../ParticleCanvas";
 
 const GoogleIcon = () => (
   <svg width="20" height="20" viewBox="0 0 48 48" fill="none">
@@ -11,6 +13,7 @@ const GoogleIcon = () => (
 );
 
 const Auth = () => {
+  const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [emailSent, setEmailSent] = useState(false);
   const [emailLoading, setEmailLoading] = useState(false);
@@ -20,11 +23,15 @@ const Auth = () => {
   const signInWithGoogle = async () => {
     setGoogleLoading(true);
     setError(null);
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: window.location.origin },
-    });
-    if (error) { setError(error.message); setGoogleLoading(false); }
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: window.location.origin + "/dashboard" },
+      });
+      if (error) setError(error.message);
+    } finally {
+      setGoogleLoading(false);
+    }
   };
 
   const sendMagicLink = async () => {
@@ -33,7 +40,7 @@ const Auth = () => {
     setError(null);
     const { error } = await supabase.auth.signInWithOtp({
       email: email.trim(),
-      options: { emailRedirectTo: window.location.origin },
+      options: { emailRedirectTo: window.location.origin + "/dashboard" },
     });
     if (error) { setError(error.message); }
     else { setEmailSent(true); }
@@ -43,41 +50,66 @@ const Auth = () => {
   return (
     <div style={{
       minHeight: "100vh",
-      display: "flex",
-      flexDirection: "column",
-      alignItems: "center",
-      justifyContent: "center",
+      display: "flex", flexDirection: "column",
+      alignItems: "center", justifyContent: "center",
       padding: "2rem",
-      animation: "fadeSlideUp 0.4s ease-out both",
+      position: "relative", overflow: "hidden",
+      backgroundColor: "#070b14",
     }}>
-      {/* Wordmark */}
-      <div style={{ marginBottom: "4.8rem" }}>
-        <span style={{ fontSize: "2.8rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.04em" }}>
-          Plu<span style={{ background: "linear-gradient(135deg, #818cf8, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>tus</span>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+        @keyframes _afadeUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+        .auth-in { animation: _afadeUp 0.55s cubic-bezier(0.16,1,0.3,1) 0.1s both; }
+      `}</style>
+
+      <ParticleCanvas density={7000} speed={0.22} />
+
+      {/* Bottom fade behind card */}
+      <div style={{
+        position: "absolute", inset: 0,
+        background: "radial-gradient(ellipse 70% 70% at 50% 60%, rgba(7,11,20,0.7) 0%, transparent 100%)",
+        pointerEvents: "none", zIndex: 1,
+      }} />
+
+      {/* Plutus logo — navigates home */}
+      <button onClick={() => navigate("/")} style={{
+        position: "fixed", top: "2rem", left: "4rem",
+        background: "none", border: "none", cursor: "pointer", padding: 0, zIndex: 50,
+      }}>
+        <span style={{
+          fontFamily: "'Space Grotesk', -apple-system, sans-serif",
+          fontSize: "1.85rem", fontWeight: 700, color: "#f8fafc", letterSpacing: "-0.035em",
+        }}>
+          Plu<span style={{ color: "#34d399" }}>tus</span>
         </span>
+      </button>
+
+      {/* Wordmark */}
+      <div className="auth-in" style={{ marginBottom: "4rem", textAlign: "center" as const, position: "relative", zIndex: 10 }}>
+        <p style={{ margin: 0, fontSize: "1.35rem", color: "#475569" }}>Your personal finance dashboard</p>
       </div>
 
       {/* Card */}
-      <div style={{
-        width: "100%",
-        maxWidth: "42rem",
-        background: "rgba(255,255,255,0.04)",
+      <div className="auth-in" style={{
+        position: "relative", zIndex: 10,
+        width: "100%", maxWidth: "42rem",
+        background: "rgba(7,11,20,0.80)",
         border: "1px solid rgba(255,255,255,0.09)",
-        borderTop: "1px solid rgba(255,255,255,0.14)",
+        borderTop: "1px solid rgba(255,255,255,0.16)",
         borderRadius: "2rem",
         padding: "4rem",
-        backdropFilter: "blur(24px)",
+        backdropFilter: "blur(32px)",
       }}>
         {emailSent ? (
-          /* Magic link sent state */
-          <div style={{ textAlign: "center", animation: "fadeSlideUp 0.3s ease-out both" }}>
+          <div style={{ textAlign: "center" as const }}>
             <div style={{
               width: "6.4rem", height: "6.4rem", borderRadius: "50%",
-              background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)",
+              background: "rgba(5,150,105,0.12)",
+              border: "1px solid rgba(5,150,105,0.28)",
               display: "flex", alignItems: "center", justifyContent: "center",
               margin: "0 auto 2.4rem",
             }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#818cf8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="2" y="4" width="20" height="16" rx="2"/>
                 <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
               </svg>
@@ -88,13 +120,10 @@ const Auth = () => {
             <p style={{ margin: "0 0 2.4rem", fontSize: "1.5rem", color: "#64748b", lineHeight: 1.6 }}>
               We sent a magic link to <strong style={{ color: "#94a3b8" }}>{email}</strong>. Click it to sign in.
             </p>
-            <button
-              onClick={() => setEmailSent(false)}
-              style={{
-                background: "none", border: "none", cursor: "pointer",
-                fontSize: "1.4rem", color: "#475569", fontWeight: 500,
-              }}
-            >
+            <button onClick={() => setEmailSent(false)} style={{
+              background: "none", border: "none", cursor: "pointer",
+              fontSize: "1.4rem", color: "#475569", fontWeight: 500,
+            }}>
               Try a different email
             </button>
           </div>
@@ -107,91 +136,66 @@ const Auth = () => {
               Connect your bank and take control of your spending.
             </p>
 
-            {/* Google */}
-            <button
-              onClick={signInWithGoogle}
-              disabled={googleLoading}
-              style={{
-                width: "100%",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: "1.2rem",
-                background: "rgba(255,255,255,0.07)",
-                border: "1px solid rgba(255,255,255,0.14)",
-                borderRadius: "1.2rem",
-                padding: "1.4rem 2.4rem",
-                fontSize: "1.6rem",
-                fontWeight: 600,
-                color: "#f8fafc",
-                cursor: googleLoading ? "not-allowed" : "pointer",
-                opacity: googleLoading ? 0.6 : 1,
-                transition: "background 0.15s, border-color 0.15s",
-                fontFamily: "inherit",
-                marginBottom: "2rem",
-              }}
-              onMouseEnter={(e) => {
-                if (!googleLoading) {
-                  (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.11)";
-                  (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.22)";
-                }
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.07)";
-                (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.14)";
-              }}
+            <button onClick={signInWithGoogle} disabled={googleLoading} style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+              gap: "1.2rem",
+              background: "rgba(255,255,255,0.07)",
+              border: "1px solid rgba(255,255,255,0.14)",
+              borderRadius: "1.2rem",
+              padding: "1.4rem 2.4rem",
+              fontSize: "1.6rem", fontWeight: 600, color: "#f8fafc",
+              cursor: googleLoading ? "not-allowed" : "pointer",
+              opacity: googleLoading ? 0.6 : 1,
+              transition: "background 0.15s, border-color 0.15s",
+              fontFamily: "inherit", marginBottom: "2rem",
+            }}
+              onMouseEnter={(e) => { if (!googleLoading) { const b = e.currentTarget as HTMLButtonElement; b.style.background = "rgba(255,255,255,0.11)"; b.style.borderColor = "rgba(255,255,255,0.22)"; } }}
+              onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.background = "rgba(255,255,255,0.07)"; b.style.borderColor = "rgba(255,255,255,0.14)"; }}
             >
               <GoogleIcon />
               {googleLoading ? "Redirecting…" : "Continue with Google"}
             </button>
 
-            {/* Divider */}
             <div style={{ display: "flex", alignItems: "center", gap: "1.6rem", marginBottom: "2rem" }}>
               <div style={{ flex: 1, height: "1px", background: "rgba(255,255,255,0.08)" }} />
-              <span style={{ fontSize: "1.3rem", color: "#334155", fontWeight: 500 }}>or</span>
+              <span style={{ fontSize: "1.3rem", color: "#64748b", fontWeight: 500 }}>or</span>
               <div style={{ flex: 1, height: "1px", background: "rgba(255,255,255,0.08)" }} />
             </div>
 
-            {/* Email magic link */}
             <div style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>
               <input
-                type="email"
-                placeholder="your@email.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                type="email" placeholder="your@email.com"
+                value={email} onChange={(e) => setEmail(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && sendMagicLink()}
                 style={{
-                  width: "100%",
-                  height: "5.6rem",
+                  width: "100%", height: "5.6rem",
                   background: "rgba(255,255,255,0.05)",
                   border: "1px solid rgba(255,255,255,0.09)",
                   borderRadius: "1.2rem",
                   padding: "0 2rem",
-                  fontSize: "1.6rem",
-                  color: "#f8fafc",
-                  outline: "none",
-                  fontFamily: "inherit",
+                  fontSize: "1.6rem", color: "#f8fafc",
+                  outline: "none", fontFamily: "inherit",
                   transition: "border-color 0.2s",
+                  boxSizing: "border-box" as const,
                 }}
-                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(99,102,241,0.6)"; }}
+                onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(5,150,105,0.6)"; }}
                 onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"; }}
               />
               <button
                 onClick={sendMagicLink}
                 disabled={emailLoading || !email.trim()}
                 style={{
-                  width: "100%",
-                  height: "5.6rem",
-                  background: email.trim() && !emailLoading ? "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)" : "rgba(255,255,255,0.07)",
-                  border: "none",
-                  borderRadius: "1.2rem",
-                  fontSize: "1.6rem",
-                  fontWeight: 700,
-                  color: email.trim() && !emailLoading ? "#fff" : "#334155",
+                  width: "100%", height: "5.6rem",
+                  background: email.trim() && !emailLoading
+                    ? "linear-gradient(135deg, #047857 0%, #059669 100%)"
+                    : "rgba(255,255,255,0.07)",
+                  border: "none", borderRadius: "1.2rem",
+                  fontSize: "1.6rem", fontWeight: 700,
+                  color: email.trim() && !emailLoading ? "#fff" : "#64748b",
                   cursor: email.trim() && !emailLoading ? "pointer" : "not-allowed",
                   transition: "opacity 0.15s, box-shadow 0.15s",
                   fontFamily: "inherit",
-                  boxShadow: email.trim() && !emailLoading ? "0 8px 28px rgba(99,102,241,0.4)" : undefined,
+                  boxShadow: email.trim() && !emailLoading ? "0 8px 28px rgba(5,150,105,0.4)" : undefined,
                 }}
               >
                 {emailLoading ? "Sending…" : "Send magic link"}
@@ -200,22 +204,27 @@ const Auth = () => {
 
             {error && (
               <div style={{
-                marginTop: "1.6rem",
-                borderRadius: "1rem",
+                marginTop: "1.6rem", borderRadius: "1rem",
                 padding: "1.2rem 1.6rem",
                 background: "rgba(248,113,113,0.1)",
                 border: "1px solid rgba(248,113,113,0.2)",
-                fontSize: "1.4rem",
-                color: "#f87171",
-              }}>
-                {error}
-              </div>
+                fontSize: "1.4rem", color: "#f87171",
+              }}>{error}</div>
             )}
           </>
         )}
       </div>
 
-      <p style={{ marginTop: "2.4rem", fontSize: "1.3rem", color: "#1e293b", textAlign: "center" }}>
+      <p style={{
+        position: "relative", zIndex: 10,
+        marginTop: "2.4rem", fontSize: "1.3rem", color: "#334155",
+        textAlign: "center", display: "flex", alignItems: "center",
+        gap: "0.5rem", justifyContent: "center",
+      }}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
         Your financial data is end-to-end encrypted and never sold.
       </p>
     </div>

@@ -1,44 +1,37 @@
 package com.plaid.quickstart;
 
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import com.plaid.client.ApiClient;
+import com.plaid.client.model.CountryCode;
+import com.plaid.client.model.Products;
 import com.plaid.client.request.PlaidApi;
-import com.plaid.quickstart.resources.AccessTokenResource;
-import com.plaid.quickstart.resources.AccountsResource;
-import com.plaid.quickstart.resources.AssetsResource;
-import com.plaid.quickstart.resources.AuthResource;
-import com.plaid.quickstart.resources.BalanceResource;
-import com.plaid.quickstart.resources.CraResource;
-import com.plaid.quickstart.resources.SpendingReviewResource;
-import com.plaid.quickstart.resources.HoldingsResource;
-import com.plaid.quickstart.resources.IdentityResource;
-import com.plaid.quickstart.resources.InfoResource;
-import com.plaid.quickstart.resources.InvestmentTransactionsResource;
-import com.plaid.quickstart.resources.ItemResource;
-import com.plaid.quickstart.resources.LinkExitErrorResource;
-import com.plaid.quickstart.resources.LinkTokenResource;
-import com.plaid.quickstart.resources.LinkTokenWithPaymentResource;
-import com.plaid.quickstart.resources.PaymentInitiationResource;
-import com.plaid.quickstart.resources.PublicTokenResource;
-import com.plaid.quickstart.resources.SignalResource;
-import com.plaid.quickstart.resources.StatementsResource;
-import com.plaid.quickstart.resources.TransactionsResource;
-import com.plaid.quickstart.resources.TransferAuthorizeResource;
-import com.plaid.quickstart.resources.TransferCreateResource;
-import com.plaid.quickstart.resources.UserTokenResource;
+import com.plaid.quickstart.resources.*;
 import io.dropwizard.Application;
 import io.dropwizard.configuration.EnvironmentVariableSubstitutor;
 import io.dropwizard.configuration.SubstitutingSourceProvider;
 import io.dropwizard.setup.Bootstrap;
 import io.dropwizard.setup.Environment;
+import org.eclipse.jetty.servlets.CrossOriginFilter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import javax.servlet.DispatcherType;
+import javax.servlet.FilterRegistration;
 import java.util.Arrays;
-import java.util.HashMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 public class QuickstartApplication extends Application<QuickstartConfiguration> {
+  private static final Logger LOG = LoggerFactory.getLogger(QuickstartApplication.class);
+
+  // Per-user Plaid access tokens
+  public static final Map<String, String> userTokens = new ConcurrentHashMap<>();
+  public static SupabaseService supabaseService;
+
+  // Legacy globals kept for unregistered quickstart resource source files that still compile
   public static String accessToken;
   public static String userToken;
   public static String userId;
@@ -47,102 +40,89 @@ public class QuickstartApplication extends Application<QuickstartConfiguration> 
   public static String authorizationId;
   public static String accountId;
 
-  // Per-user Plaid access tokens; populated on set_access_token and restored from Supabase on demand
-  public static final Map<String, String> userTokens = new ConcurrentHashMap<>();
-  public static SupabaseService supabaseService;
-
   private PlaidApi plaidClient;
   private ApiClient apiClient;
-  public String plaidEnv;
 
   public static void main(final String[] args) throws Exception {
     new QuickstartApplication().run(args);
   }
 
   @Override
-  public String getName() {
-    return "Quickstart";
-  }
+  public String getName() { return "Plutus"; }
 
   @Override
   public void initialize(final Bootstrap<QuickstartConfiguration> bootstrap) {
-    bootstrap.getObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE);
+    bootstrap.getObjectMapper().setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
     bootstrap.setConfigurationSourceProvider(
-      new SubstitutingSourceProvider(bootstrap.getConfigurationSourceProvider(),
-        new EnvironmentVariableSubstitutor(false)
-      )
-    );
+        new SubstitutingSourceProvider(bootstrap.getConfigurationSourceProvider(),
+            new EnvironmentVariableSubstitutor(false)));
   }
 
   @Override
-  public void run(final QuickstartConfiguration configuration,
-    final Environment environment) {
-    // or equivalent, depending on which environment you're calling into
+  public void run(final QuickstartConfiguration configuration, final Environment environment) {
+    // ── Plaid client ──────────────────────────────────────────────────────────
+    String plaidEnv;
     switch (configuration.getPlaidEnv()) {
-      case "sandbox":
-        plaidEnv = ApiClient.Sandbox;
-        break;
-      case "production":
-        plaidEnv = ApiClient.Production;
-        break;
-      default:
-        plaidEnv = ApiClient.Sandbox;
+      case "production": plaidEnv = ApiClient.Production; break;
+      default: plaidEnv = ApiClient.Sandbox;
     }
-    List<String> plaidProducts = Arrays.asList(configuration.getPlaidProducts().split(","));
-    List<String> countryCodes = Arrays.asList(configuration.getPlaidCountryCodes().split(","));
-    String plaidClientId = System.getenv("PLAID_CLIENT_ID");
-    String plaidSecret = System.getenv("PLAID_SECRET");
-    String redirectUri = null;
-    if (configuration.getPlaidRedirectUri() != null && configuration.getPlaidRedirectUri().length() > 0) {
-      redirectUri = configuration.getPlaidRedirectUri();
-    }
-    String signalRulesetKey = configuration.getSignalRulesetKey();
 
-    HashMap<String, String> apiKeys = new HashMap<String, String>();
-    apiKeys.put("clientId", plaidClientId);
-    apiKeys.put("secret", plaidSecret);
-    apiKeys.put("plaidVersion", "2020-09-14");
+    String plaidClientId = System.getenv("PLAID_CLIENT_ID");
+    String plaidSecret   = System.getenv("PLAID_SECRET");
+
+    Map<String, String> apiKeys = Map.of(
+        "clientId", plaidClientId != null ? plaidClientId : "",
+        "secret",   plaidSecret   != null ? plaidSecret   : "",
+        "plaidVersion", "2020-09-14");
     apiClient = new ApiClient(apiKeys);
     apiClient.setPlaidAdapter(plaidEnv);
-
     plaidClient = apiClient.createService(PlaidApi.class);
 
+    // ── Parse product + country lists once (not per-request) ─────────────────
+    List<Products> products = Arrays.stream(configuration.getPlaidProducts().split(","))
+        .map(String::trim).map(Products::fromValue).collect(Collectors.toList());
+    List<CountryCode> countryCodes = Arrays.stream(configuration.getPlaidCountryCodes().split(","))
+        .map(String::trim).map(CountryCode::fromValue).collect(Collectors.toList());
+    String redirectUri = configuration.getPlaidRedirectUri();
+    if (redirectUri != null && redirectUri.isEmpty()) redirectUri = null;
+
+    // ── Supabase + JWT ────────────────────────────────────────────────────────
     supabaseService = new SupabaseService(
         System.getenv("SUPABASE_URL"),
         System.getenv("SUPABASE_SERVICE_ROLE_KEY"));
 
+    JwtValidator jwtValidator = new JwtValidator(
+        System.getenv("SUPABASE_URL"),
+        System.getenv("SUPABASE_SERVICE_ROLE_KEY"));
+
+    // ── CORS ──────────────────────────────────────────────────────────────────
+    String allowedOrigin = System.getenv("FRONTEND_ORIGIN");
+    if (allowedOrigin == null || allowedOrigin.isEmpty()) allowedOrigin = "*";
+    FilterRegistration.Dynamic cors = environment.servlets().addFilter("CORS", CrossOriginFilter.class);
+    cors.setInitParameter(CrossOriginFilter.ALLOWED_ORIGINS_PARAM, allowedOrigin);
+    cors.setInitParameter(CrossOriginFilter.ALLOWED_HEADERS_PARAM, "Authorization,Content-Type,X-Requested-With,Accept,Origin");
+    cors.setInitParameter(CrossOriginFilter.ALLOWED_METHODS_PARAM, "GET,POST,PUT,DELETE,OPTIONS,HEAD");
+    cors.setInitParameter(CrossOriginFilter.CHAIN_PREFLIGHT_PARAM, "false");
+    cors.addMappingForUrlPatterns(EnumSet.allOf(DispatcherType.class), true, "/*");
+
+    // ── Resources ─────────────────────────────────────────────────────────────
     environment.jersey().register(new PlaidApiExceptionMapper());
-    environment.jersey().register(new AccessTokenResource(plaidClient, plaidProducts, supabaseService));
-    environment.jersey().register(new AccountsResource(plaidClient));
-    environment.jersey().register(new AssetsResource(plaidClient));
-    environment.jersey().register(new AuthResource(plaidClient));
-    environment.jersey().register(new BalanceResource(plaidClient, signalRulesetKey));
-    environment.jersey().register(new HoldingsResource(plaidClient));
-    environment.jersey().register(new IdentityResource(plaidClient));
-    environment.jersey().register(new InfoResource(plaidProducts));
-    environment.jersey().register(new InvestmentTransactionsResource(plaidClient));
-    environment.jersey().register(new ItemResource(plaidClient));
+    environment.jersey().register(new HealthResource());
+    environment.jersey().register(new PlaidWebhookResource());
+    environment.jersey().register(new InfoResource(Arrays.asList(configuration.getPlaidProducts().split(","))));
+    environment.jersey().register(new LinkTokenResource(plaidClient, products, countryCodes, redirectUri, jwtValidator));
+    environment.jersey().register(new LinkTokenWithPaymentResource(plaidClient, Arrays.asList(configuration.getPlaidProducts().split(",")), Arrays.asList(configuration.getPlaidCountryCodes().split(",")), redirectUri));
+    environment.jersey().register(new AccessTokenResource(plaidClient, supabaseService, jwtValidator));
     environment.jersey().register(new LinkExitErrorResource());
-    environment.jersey().register(new LinkTokenResource(plaidClient, plaidProducts, countryCodes, redirectUri));
-    environment.jersey().register(new LinkTokenWithPaymentResource(plaidClient, plaidProducts, countryCodes, redirectUri));
-    environment.jersey().register(new PaymentInitiationResource(plaidClient));
-    environment.jersey().register(new PublicTokenResource(plaidClient));
-    environment.jersey().register(new SignalResource(plaidClient, signalRulesetKey));
-    environment.jersey().register(new StatementsResource(plaidClient));
-    environment.jersey().register(new TransactionsResource(plaidClient));
-    environment.jersey().register(new TransferAuthorizeResource(plaidClient));
-    environment.jersey().register(new TransferCreateResource(plaidClient));
-    environment.jersey().register(new UserTokenResource(plaidClient, plaidProducts));
-    environment.jersey().register(new CraResource(plaidClient));
-    environment.jersey().register(new SpendingReviewResource(plaidClient));
+    environment.jersey().register(new UserTokenResource(plaidClient, Arrays.asList(configuration.getPlaidProducts().split(","))));
+    environment.jersey().register(new SpendingReviewResource(plaidClient, jwtValidator));
+    environment.jersey().register(new UpdateLinkTokenResource(plaidClient, jwtValidator, countryCodes));
+    environment.jersey().register(new RemoveItemResource(plaidClient, jwtValidator));
+    environment.jersey().register(new RefreshResource(jwtValidator));
+
+    LOG.info("Plutus backend started — Plaid env: {}, CORS origin: {}", plaidEnv, allowedOrigin);
   }
 
-  protected PlaidApi client() {
-    return plaidClient;
-  }
-
-  protected ApiClient apiClient() {
-    return apiClient;
-  }
-
+  protected PlaidApi client() { return plaidClient; }
+  protected ApiClient apiClient() { return apiClient; }
 }

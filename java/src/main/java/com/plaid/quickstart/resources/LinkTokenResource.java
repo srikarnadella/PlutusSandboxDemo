@@ -1,106 +1,65 @@
 package com.plaid.quickstart.resources;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.plaid.client.model.ConsumerReportPermissiblePurpose;
 import com.plaid.client.model.CountryCode;
 import com.plaid.client.model.LinkTokenCreateRequest;
-import com.plaid.client.model.LinkTokenCreateRequestCraOptions;
-import com.plaid.client.model.LinkTokenCreateRequestStatements;
 import com.plaid.client.model.LinkTokenCreateRequestUser;
 import com.plaid.client.model.LinkTokenCreateResponse;
 import com.plaid.client.model.Products;
 import com.plaid.client.request.PlaidApi;
+import com.plaid.quickstart.JwtValidator;
 import com.plaid.quickstart.PlaidApiHelper;
-import com.plaid.quickstart.QuickstartApplication;
 
+import javax.ws.rs.HeaderParam;
 import javax.ws.rs.POST;
 import javax.ws.rs.Path;
 import javax.ws.rs.Produces;
 import javax.ws.rs.core.MediaType;
 import java.io.IOException;
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Date;
 import java.util.List;
+import java.util.UUID;
 
 @Path("/create_link_token")
 @Produces(MediaType.APPLICATION_JSON)
 public class LinkTokenResource {
   private final PlaidApi plaidClient;
-  private final List<String> plaidProducts;
-  private final List<String> countryCodes;
+  private final List<Products> products;
+  private final List<CountryCode> countryCodes;
   private final String redirectUri;
-  private final List<Products> correctedPlaidProducts;
-  private final List<CountryCode> correctedCountryCodes;
-
-  public LinkTokenResource(PlaidApi plaidClient, List<String> plaidProducts,
-    List<String> countryCodes, String redirectUri) {
-    this.plaidClient = plaidClient;
-    this.plaidProducts = plaidProducts;
-    this.countryCodes = countryCodes;
-    this.redirectUri = redirectUri;
-    this.correctedPlaidProducts = new ArrayList<>();
-    this.correctedCountryCodes = new ArrayList<>();
-  }
+  private final JwtValidator jwtValidator;
 
   public static class LinkToken {
-    @JsonProperty
-    private String linkToken;
-
-    public LinkToken(String linkToken) {
-      this.linkToken = linkToken;
-    }
+    @JsonProperty("link_token") public final String linkToken;
+    public LinkToken(String lt) { this.linkToken = lt; }
   }
 
-  @POST public LinkToken getLinkToken() throws IOException {
-    
+  public LinkTokenResource(PlaidApi plaidClient, List<Products> products,
+      List<CountryCode> countryCodes, String redirectUri, JwtValidator jwtValidator) {
+    this.plaidClient = plaidClient;
+    this.products = products;
+    this.countryCodes = countryCodes;
+    this.redirectUri = redirectUri;
+    this.jwtValidator = jwtValidator;
+  }
 
-    String clientUserId = Long.toString((new Date()).getTime());
-    LinkTokenCreateRequestUser user = new LinkTokenCreateRequestUser()
-		.clientUserId(clientUserId);
+  @POST
+  public LinkToken getLinkToken(@HeaderParam("Authorization") String authHeader) throws IOException {
+    // Use authenticated user's UUID as clientUserId when available; fall back to random UUID
+    String clientUserId = jwtValidator.tryGetUserId(authHeader);
+    if (clientUserId == null) clientUserId = UUID.randomUUID().toString();
 
-    for (int i = 0; i < this.plaidProducts.size(); i++){
-      this.correctedPlaidProducts.add(Products.fromValue(this.plaidProducts.get(i)));
-    };
+    LinkTokenCreateRequestUser user = new LinkTokenCreateRequestUser().clientUserId(clientUserId);
 
-    for (int i = 0; i < this.countryCodes.size(); i++){
-      this.correctedCountryCodes.add(CountryCode.fromValue(this.countryCodes.get(i)));
-    };
+    LinkTokenCreateRequest request = new LinkTokenCreateRequest()
+        .user(user)
+        .clientName("Plutus")
+        .products(products)
+        .countryCodes(countryCodes)
+        .language("en");
 
+    if (redirectUri != null && !redirectUri.isEmpty()) request.redirectUri(redirectUri);
 
-		LinkTokenCreateRequest request = new LinkTokenCreateRequest()
-			.user(user)
-			.clientName("Quickstart Client")
-			.products(this.correctedPlaidProducts)
-			.countryCodes(this.correctedCountryCodes)
-			.language("en")
-      .redirectUri(this.redirectUri);
-
-    if (this.correctedPlaidProducts.contains(Products.STATEMENTS)) {
-      LinkTokenCreateRequestStatements statementsConfig = new LinkTokenCreateRequestStatements()
-        .startDate(LocalDate.now().minusDays(30))
-        .endDate(LocalDate.now());
-      request.setStatements(statementsConfig);
-    }
-
-    if (plaidProducts.stream().anyMatch(product -> product.startsWith("cra_"))) {
-      // Use user_token if available, otherwise use user_id
-      if (QuickstartApplication.userToken != null) {
-        request.userToken(QuickstartApplication.userToken);
-        // Keep user object when using user_token
-      } else if (QuickstartApplication.userId != null) {
-        request.userId(QuickstartApplication.userId);
-        // Remove user object when using user_id
-        request.user(null);
-      }
-      request.consumerReportPermissiblePurpose(ConsumerReportPermissiblePurpose.ACCOUNT_REVIEW_CREDIT);
-      LinkTokenCreateRequestCraOptions options = new LinkTokenCreateRequestCraOptions();
-      options.daysRequested(60);
-      request.craOptions(options);
-    }
-
-    LinkTokenCreateResponse responseBody = PlaidApiHelper.callPlaid(
-      plaidClient.linkTokenCreate(request));
+    LinkTokenCreateResponse responseBody = PlaidApiHelper.callPlaid(plaidClient.linkTokenCreate(request));
     return new LinkToken(responseBody.getLinkToken());
   }
 }

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useContext } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { apiFetch } from "../../lib/apiFetch";
 import type { User } from "@supabase/supabase-js";
@@ -8,6 +9,8 @@ import Transactions from "./Transactions";
 import Budgets from "./Budgets";
 import Account from "./Account";
 import Goals, { type SavingsGoal } from "./Goals";
+import { useToast } from "../Toast";
+import type { ReviewResult } from "./shared";
 
 // ── Shared types ──────────────────────────────────────────────────────────────
 
@@ -29,73 +32,119 @@ const PRESET_CATEGORIES = [
 
 type Tab = "dashboard" | "transactions" | "budgets" | "goals" | "account";
 
-const NAV: { id: Tab; label: string; icon: string }[] = [
-  { id: "dashboard",    label: "Overview",      icon: "⊞" },
-  { id: "transactions", label: "Transactions",  icon: "≡" },
-  { id: "budgets",      label: "Budgets",       icon: "◎" },
-  { id: "goals",        label: "Goals",         icon: "◇" },
-  { id: "account",      label: "Account",       icon: "○" },
+const NavIcons: Record<Tab, React.FC<{ size?: number; color?: string }>> = {
+  dashboard: ({ size = 18, color = "currentColor" }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  ),
+  transactions: ({ size = 18, color = "currentColor" }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </svg>
+  ),
+  budgets: ({ size = 18, color = "currentColor" }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 2a10 10 0 1 0 10 10" />
+      <path d="M12 2a10 10 0 0 1 10 10h-10z" />
+    </svg>
+  ),
+  goals: ({ size = 18, color = "currentColor" }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="6" />
+      <circle cx="12" cy="12" r="2" />
+    </svg>
+  ),
+  account: ({ size = 18, color = "currentColor" }) => (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
+    </svg>
+  ),
+};
+
+const NAV: { id: Tab; label: string }[] = [
+  { id: "dashboard",    label: "Overview" },
+  { id: "transactions", label: "Transactions" },
+  { id: "budgets",      label: "Budgets" },
+  { id: "goals",        label: "Goals" },
+  { id: "account",      label: "Account" },
 ];
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 
 const Sidebar = ({
-  activeTab, onTab, userEmail, onSignOut,
-}: { activeTab: Tab; onTab: (t: Tab) => void; userEmail?: string; onSignOut: () => void }) => (
+  activeTab, onTab, userEmail, onSignOut, onLogoClick,
+}: { activeTab: Tab; onTab: (t: Tab) => void; userEmail?: string; onSignOut: () => void; onLogoClick: () => void }) => (
   <div style={{
     width: "220px", position: "fixed", top: 0, left: 0, bottom: 0,
-    background: "rgba(7,11,20,0.85)",
-    backdropFilter: "blur(20px)",
+    background: "rgba(7,11,20,0.92)",
+    backdropFilter: "blur(24px)",
     borderRight: "1px solid rgba(255,255,255,0.07)",
     display: "flex", flexDirection: "column",
-    padding: "2.4rem 1.2rem",
+    padding: "2.4rem 1rem",
     zIndex: 100,
   }}>
     {/* Logo */}
-    <div style={{ marginBottom: "3.2rem", paddingLeft: "1.2rem" }}>
-      <span style={{ fontSize: "1.8rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.04em" }}>
-        Plu<span style={{ background: "linear-gradient(135deg, #818cf8, #a78bfa)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>tus</span>
-      </span>
+    <div style={{ marginBottom: "3rem", paddingLeft: "1.4rem" }}>
+      <button onClick={onLogoClick} style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+        <span style={{ fontSize: "1.85rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.04em" }}>
+          Plu<span style={{ background: "linear-gradient(135deg, #34d399, #059669)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>tus</span>
+        </span>
+      </button>
+      <div style={{ height: "1px", background: "linear-gradient(90deg, rgba(5,150,105,0.4), transparent)", marginTop: "1.6rem", marginLeft: "-1.4rem", marginRight: "-1rem" }} />
     </div>
 
     {/* Nav items */}
-    <nav style={{ display: "flex", flexDirection: "column", gap: "0.2rem", flex: 1 }}>
-      {NAV.map(({ id, label, icon }) => {
+    <nav style={{ display: "flex", flexDirection: "column", gap: "0.3rem", flex: 1 }}>
+      {NAV.map(({ id, label }) => {
         const active = activeTab === id;
+        const Icon = NavIcons[id];
         return (
           <button
             key={id}
             onClick={() => onTab(id)}
             style={{
               display: "flex", alignItems: "center", gap: "1rem",
-              padding: "0.9rem 1.2rem",
-              borderRadius: "0.8rem",
+              padding: "0.85rem 1.4rem",
+              borderRadius: "0.9rem",
               border: "none",
-              borderLeft: active ? "2px solid #818cf8" : "2px solid transparent",
-              background: active ? "rgba(99,102,241,0.1)" : "transparent",
-              color: active ? "#c7d2fe" : "#475569",
+              background: active ? "rgba(5,150,105,0.12)" : "transparent",
+              color: active ? "#a7f3d0" : "#64748b",
               fontWeight: active ? 600 : 400,
-              fontSize: "1.45rem",
+              fontSize: "1.4rem",
               cursor: "pointer",
               textAlign: "left" as const,
-              transition: "all 0.15s",
+              transition: "all 0.15s ease",
               width: "100%",
               letterSpacing: "-0.01em",
+              position: "relative" as const,
             }}
             onMouseEnter={(e) => {
               if (!active) {
-                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.04)";
+                (e.currentTarget as HTMLButtonElement).style.background = "rgba(255,255,255,0.05)";
                 (e.currentTarget as HTMLButtonElement).style.color = "#94a3b8";
               }
             }}
             onMouseLeave={(e) => {
               if (!active) {
                 (e.currentTarget as HTMLButtonElement).style.background = "transparent";
-                (e.currentTarget as HTMLButtonElement).style.color = "#475569";
+                (e.currentTarget as HTMLButtonElement).style.color = "#64748b";
               }
             }}
           >
-            <span style={{ fontSize: "1.3rem", opacity: active ? 1 : 0.45, width: "1.6rem", textAlign: "center" as const, flexShrink: 0 }}>{icon}</span>
+            {active && (
+              <div style={{
+                position: "absolute", left: 0, top: "20%", bottom: "20%",
+                width: "3px", borderRadius: "0 3px 3px 0",
+                background: "linear-gradient(180deg, #34d399, #059669)",
+              }} />
+            )}
+            <Icon size={17} color={active ? "#6ee7b7" : "#64748b"} />
             {label}
           </button>
         );
@@ -103,25 +152,40 @@ const Sidebar = ({
     </nav>
 
     {/* User footer */}
-    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "1.4rem" }}>
+    <div style={{ borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: "1.4rem", paddingLeft: "0.4rem", paddingRight: "0.4rem" }}>
       {userEmail && (
-        <p style={{ margin: "0 0 1rem", fontSize: "1.15rem", color: "#2d3748", paddingLeft: "0.4rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const }}>
-          {userEmail}
-        </p>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.9rem", marginBottom: "1rem", padding: "0 0.6rem" }}>
+          <div style={{
+            width: "2.8rem", height: "2.8rem", borderRadius: "50%", flexShrink: 0,
+            background: "linear-gradient(135deg, #059669, #047857)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            fontSize: "1.1rem", fontWeight: 800, color: "#fff",
+          }}>
+            {userEmail[0].toUpperCase()}
+          </div>
+          <p style={{ margin: 0, fontSize: "1.2rem", color: "#64748b", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" as const, flex: 1 }}>
+            {userEmail}
+          </p>
+        </div>
       )}
       <button
         onClick={onSignOut}
         style={{
-          width: "100%", padding: "0.8rem 1.2rem", borderRadius: "0.8rem",
+          width: "100%", padding: "0.8rem 1.4rem", borderRadius: "0.8rem",
           border: "1px solid rgba(255,255,255,0.07)",
           background: "transparent",
-          color: "#334155", fontSize: "1.35rem", fontWeight: 500,
+          color: "#64748b", fontSize: "1.35rem", fontWeight: 500,
           cursor: "pointer", textAlign: "left" as const, transition: "all 0.15s",
-          letterSpacing: "-0.01em",
+          letterSpacing: "-0.01em", display: "flex", alignItems: "center", gap: "0.8rem",
         }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f87171"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(248,113,113,0.25)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,113,113,0.05)"; }}
-        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#334155"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.07)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#f87171"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(248,113,113,0.25)"; (e.currentTarget as HTMLButtonElement).style.background = "rgba(248,113,113,0.06)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.color = "#64748b"; (e.currentTarget as HTMLButtonElement).style.borderColor = "rgba(255,255,255,0.07)"; (e.currentTarget as HTMLButtonElement).style.background = "transparent"; }}
       >
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <polyline points="16 17 21 12 16 7" />
+          <line x1="21" y1="12" x2="9" y2="12" />
+        </svg>
         Sign out
       </button>
     </div>
@@ -133,6 +197,8 @@ const Sidebar = ({
 const SpendingReview = () => {
   const _now = new Date();
   const { dispatch } = useContext(Context);
+  const navigate = useNavigate();
+  const { showToast } = useToast();
 
   const handleReconnect = () => {
     dispatch({ type: "SET_STATE", state: { hasPlaidConnection: false, linkSuccess: false } });
@@ -145,8 +211,9 @@ const SpendingReview = () => {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [noteTags, setNoteTags] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<ReviewResult | null>(null);
   const [selectedYear, setSelectedYear] = useState(_now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(_now.getMonth() + 1);
   const [user, setUser] = useState<User | null>(null);
@@ -247,10 +314,15 @@ const SpendingReview = () => {
     if (!user) return;
     setNotes((prev) => ({ ...prev, [transactionId]: note }));
     setNoteTags((prev) => ({ ...prev, [transactionId]: tag }));
-    await supabase.from("transaction_notes").upsert(
-      { user_id: user.id, transaction_id: transactionId, note, tag: tag || null, updated_at: new Date().toISOString() },
-      { onConflict: "user_id,transaction_id" }
-    );
+    try {
+      const { error: saveErr } = await supabase.from("transaction_notes").upsert(
+        { user_id: user.id, transaction_id: transactionId, note, tag: tag || null, updated_at: new Date().toISOString() },
+        { onConflict: "user_id,transaction_id" }
+      );
+      if (saveErr) showToast("Failed to save note", "error");
+    } catch {
+      showToast("Failed to save note", "error");
+    }
   };
 
   // Debounced income save
@@ -275,7 +347,15 @@ const SpendingReview = () => {
         method: "POST",
         body: JSON.stringify({ budgets, avoid_categories, year: yr, month: mo, user_id: user?.id ?? "" }),
       });
-      if (!resp.ok) throw new Error(`Request failed: ${resp.status}`);
+      if (!resp.ok) {
+        let errorMsg = `Request failed: ${resp.status}`;
+        try {
+          const errData = await resp.json();
+          const code = errData?.error?.error_code ?? errData?.error_code;
+          errorMsg = code ?? errData?.error?.error_message ?? errData?.message ?? errorMsg;
+        } catch { /* ignore parse error */ }
+        throw new Error(errorMsg);
+      }
       const data = await resp.json();
       setResult(data);
       if (user) saveGoals(user.id, goals);
@@ -292,6 +372,20 @@ const SpendingReview = () => {
     runReview(yr, mo);
   };
 
+  const handleRefresh = async () => {
+    if (refreshing || loading) return;
+    setRefreshing(true);
+    try {
+      await apiFetch("/api/refresh_transactions", { method: "POST" });
+      await runReview();
+      showToast("Transactions refreshed from your bank", "success");
+    } catch {
+      showToast("Refresh failed — please try again", "error");
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleSignOut = () => supabase.auth.signOut();
 
   // ── Loading gate ────────────────────────────────────────────────────────────
@@ -299,9 +393,9 @@ const SpendingReview = () => {
   if (profileLoading) {
     return (
       <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: "2rem" }}>
-        <div style={{ width: "4rem", height: "4rem", borderRadius: "50%", border: "3px solid rgba(99,102,241,0.2)", borderTopColor: "#6366f1", animation: "spin 0.8s linear infinite" }} />
+        <div style={{ width: "4rem", height: "4rem", borderRadius: "50%", border: "3px solid rgba(5,150,105,0.2)", borderTopColor: "#059669", animation: "spin 0.8s linear infinite" }} />
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-        <p style={{ fontSize: "1.5rem", color: "#334155", margin: 0 }}>Loading your profile…</p>
+        <p style={{ fontSize: "1.5rem", color: "#64748b", margin: 0 }}>Loading your profile…</p>
       </div>
     );
   }
@@ -319,11 +413,13 @@ const SpendingReview = () => {
             selectedYear={selectedYear}
             selectedMonth={selectedMonth}
             loading={loading}
+            refreshing={refreshing}
             error={error}
             monthOptions={monthOptions}
             onMonthChange={handleMonthChange}
             onSetupBudgets={() => setActiveTab("budgets")}
             onReconnect={handleReconnect}
+            onRefresh={handleRefresh}
           />
         );
       case "transactions":
@@ -374,18 +470,24 @@ const SpendingReview = () => {
   };
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh" }}>
+    <div style={{ display: "flex", minHeight: "100vh", position: "relative" }}>
+      {/* Ambient background orbs */}
+      <div style={{ position: "fixed", top: "10%", right: "20%", width: "40rem", height: "40rem", borderRadius: "50%", background: "radial-gradient(circle, rgba(5,150,105,0.05) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
+      <div style={{ position: "fixed", bottom: "5%", right: "5%", width: "30rem", height: "30rem", borderRadius: "50%", background: "radial-gradient(circle, rgba(52,211,153,0.04) 0%, transparent 70%)", pointerEvents: "none", zIndex: 0 }} />
       <Sidebar
         activeTab={activeTab}
         onTab={setActiveTab}
         userEmail={user?.email}
         onSignOut={handleSignOut}
+        onLogoClick={() => navigate("/dashboard")}
       />
       <main style={{
         marginLeft: "220px",
         flex: 1,
         padding: "3.6rem 4rem 6rem",
         minHeight: "100vh",
+        position: "relative",
+        zIndex: 1,
       }}>
         {mainContent()}
       </main>

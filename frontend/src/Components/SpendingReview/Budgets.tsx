@@ -1,8 +1,9 @@
 import React from "react";
 
-const CATEGORY_ICONS: Record<string, string> = {
-  "Food and Drink": "🍕", Shops: "🛍️", Travel: "✈️", Recreation: "🎮",
-  Healthcare: "🏥", Service: "⚙️", Transfer: "↔️", Payment: "💳",
+const CATEGORY_COLORS: Record<string, string> = {
+  "Food and Drink": "#fb923c", Shops: "#a78bfa", Travel: "#38bdf8",
+  Recreation: "#34d399", Healthcare: "#f87171", Service: "#fbbf24",
+  Transfer: "#818cf8", Payment: "#e879f9",
 };
 
 const PRESETS: Record<string, Record<string, number>> = {
@@ -68,34 +69,34 @@ const Budgets = ({ goals, discretionary, allocated, loading, error, onUpdateGoal
         <div style={{ marginBottom: "2.4rem", background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: "1.6rem", padding: "2.4rem 3.2rem" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: "1.4rem" }}>
             <div>
-              <p style={{ margin: "0 0 0.3rem", fontSize: "1.2rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Discretionary Budget</p>
+              <p style={{ margin: "0 0 0.3rem", fontSize: "1.2rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Discretionary Budget</p>
               <p style={{ margin: 0, fontSize: "3.6rem", fontWeight: 900, color: "#f8fafc", letterSpacing: "-0.02em", lineHeight: 1 }}>
-                {fmtRound(discretionary)}<span style={{ fontSize: "1.5rem", fontWeight: 500, color: "#334155", marginLeft: "0.6rem" }}>/mo</span>
+                {fmtRound(discretionary)}<span style={{ fontSize: "1.5rem", fontWeight: 500, color: "#64748b", marginLeft: "0.6rem" }}>/mo</span>
               </p>
             </div>
             <div style={{ textAlign: "right" }}>
-              <p style={{ margin: "0 0 0.3rem", fontSize: "1.2rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>{overBudget ? "Over by" : "Unallocated"}</p>
+              <p style={{ margin: "0 0 0.3rem", fontSize: "1.2rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>{overBudget ? "Over by" : "Unallocated"}</p>
               <p style={{ margin: 0, fontSize: "2.4rem", fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1, color: overBudget ? "#f87171" : "#818cf8" }}>
                 {fmtRound(Math.abs(discretionary - allocated))}
               </p>
             </div>
           </div>
           <div style={{ width: "100%", background: "rgba(255,255,255,0.08)", borderRadius: "9999px", height: "0.7rem" }}>
-            <div style={{ width: `${pct}%`, background: overBudget ? "#f87171" : "#6366f1", borderRadius: "9999px", height: "0.7rem", transition: "width 0.3s" }} />
+            <div style={{ width: `${pct}%`, background: overBudget ? "#f87171" : "#059669", borderRadius: "9999px", height: "0.7rem", transition: "width 0.3s" }} />
           </div>
         </div>
       )}
 
       {/* Presets */}
       <div style={{ display: "flex", alignItems: "center", gap: "1.2rem", marginBottom: "2rem" }}>
-        <span style={{ fontSize: "1.3rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Quick-fill:</span>
+        <span style={{ fontSize: "1.3rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Quick-fill:</span>
         {["Tight", "Standard", "Generous"].map((name) => (
           <button key={name} onClick={() => applyPreset(name)} style={{
             background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
             borderRadius: "9999px", padding: "0.7rem 2rem", fontSize: "1.4rem", fontWeight: 600,
             color: "#64748b", cursor: "pointer", transition: "all 0.15s",
           }}
-            onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = "rgba(99,102,241,0.5)"; b.style.color = "#a5b4fc"; b.style.background = "rgba(99,102,241,0.08)"; }}
+            onMouseEnter={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = "rgba(5,150,105,0.5)"; b.style.color = "#6ee7b7"; b.style.background = "rgba(5,150,105,0.08)"; }}
             onMouseLeave={(e) => { const b = e.currentTarget as HTMLButtonElement; b.style.borderColor = "rgba(255,255,255,0.1)"; b.style.color = "#64748b"; b.style.background = "rgba(255,255,255,0.05)"; }}
           >{name}</button>
         ))}
@@ -106,30 +107,31 @@ const Budgets = ({ goals, discretionary, allocated, loading, error, onUpdateGoal
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.08)" }}>
-              <th style={{ padding: "1.4rem 2.4rem", textAlign: "left", fontSize: "1.2rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Category</th>
-              <th style={{ padding: "1.4rem 2.4rem", textAlign: "left", fontSize: "1.2rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Monthly Limit</th>
-              <th style={{ padding: "1.4rem 2.4rem", textAlign: "center", fontSize: "1.2rem", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.08em" }}>Avoid</th>
+              <th style={{ padding: "1.4rem 2.4rem", textAlign: "left", fontSize: "1.2rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Category</th>
+              <th style={{ padding: "1.4rem 2.4rem", textAlign: "left", fontSize: "1.2rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Monthly Limit</th>
+              <th style={{ padding: "1.4rem 2.4rem", textAlign: "center", fontSize: "1.2rem", fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: "0.08em" }}>Avoid</th>
             </tr>
           </thead>
           <tbody>
             {goals.map((g, i) => (
-              <tr key={g.category} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: (g.enabled || g.avoid) ? "rgba(99,102,241,0.04)" : undefined }}>
+              <tr key={g.category} style={{ borderBottom: "1px solid rgba(255,255,255,0.05)", background: (g.enabled || g.avoid) ? "rgba(5,150,105,0.04)" : undefined }}>
                 <td style={{ padding: "1.6rem 2.4rem" }}>
                   <label style={{ display: "flex", alignItems: "center", gap: "1.4rem", cursor: "pointer" }}>
                     <input type="checkbox" checked={g.enabled} onChange={() => toggle(i)}
-                      style={{ width: "1.8rem", height: "1.8rem", accentColor: "#6366f1", cursor: "pointer", flexShrink: 0 }} />
-                    <span style={{ display: "flex", alignItems: "center", gap: "0.9rem", fontSize: "1.7rem", fontWeight: g.enabled || g.avoid ? 700 : 400, color: g.enabled || g.avoid ? "#f8fafc" : "#334155" }}>
-                      <span>{CATEGORY_ICONS[g.category] ?? ""}</span>{g.category}
+                      style={{ width: "1.8rem", height: "1.8rem", accentColor: "#059669", cursor: "pointer", flexShrink: 0 }} />
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.9rem", fontSize: "1.7rem", fontWeight: g.enabled || g.avoid ? 700 : 400, color: g.enabled || g.avoid ? "#f8fafc" : "#64748b" }}>
+                      <span style={{ width: "0.7rem", height: "0.7rem", borderRadius: "50%", background: CATEGORY_COLORS[g.category] ?? "#64748b", flexShrink: 0, display: "inline-block", opacity: g.enabled || g.avoid ? 1 : 0.45 }} />
+                      {g.category}
                     </span>
                   </label>
                 </td>
                 <td style={{ padding: "1.6rem 2.4rem" }}>
                   <div style={{ position: "relative", width: "16rem" }}>
-                    <span style={{ position: "absolute", left: "1.2rem", top: "50%", transform: "translateY(-50%)", fontSize: "1.6rem", color: "#334155", pointerEvents: "none", fontWeight: 600 }}>$</span>
+                    <span style={{ position: "absolute", left: "1.2rem", top: "50%", transform: "translateY(-50%)", fontSize: "1.6rem", color: "#64748b", pointerEvents: "none", fontWeight: 600 }}>$</span>
                     <input type="number" min="0" placeholder="e.g. 200" value={g.monthlyLimit}
                       disabled={g.avoid || !g.enabled} onChange={(e) => setLimit(i, e.target.value)}
                       style={{ width: "100%", height: "4.8rem", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)", borderRadius: "0.9rem", paddingLeft: "3.6rem", paddingRight: "1rem", fontSize: "1.7rem", fontWeight: 600, color: "#f8fafc", outline: "none", opacity: (g.avoid || !g.enabled) ? 0.25 : 1, fontFamily: "inherit" }}
-                      onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(99,102,241,0.6)"; }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = "rgba(5,150,105,0.6)"; }}
                       onBlur={(e) => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.09)"; }} />
                   </div>
                 </td>
@@ -154,18 +156,18 @@ const Budgets = ({ goals, discretionary, allocated, loading, error, onUpdateGoal
           onClick={onRunReview}
           disabled={loading || !hasAny}
           style={{
-            background: loading || !hasAny ? "rgba(255,255,255,0.07)" : "linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)",
-            color: loading || !hasAny ? "#334155" : "#fff",
+            background: loading || !hasAny ? "rgba(255,255,255,0.07)" : "linear-gradient(135deg, #047857 0%, #059669 100%)",
+            color: loading || !hasAny ? "#64748b" : "#fff",
             fontWeight: 700, fontSize: "1.6rem", padding: "1.3rem 3.6rem",
             borderRadius: "1.1rem", border: "none",
             cursor: loading || !hasAny ? "not-allowed" : "pointer",
-            boxShadow: loading || !hasAny ? undefined : "0 8px 28px rgba(99,102,241,0.4)",
+            boxShadow: loading || !hasAny ? undefined : "0 8px 28px rgba(5,150,105,0.4)",
             transition: "opacity 0.15s",
           }}
         >
           {loading ? "Analyzing…" : "Save & Analyze →"}
         </button>
-        {!hasAny && <span style={{ fontSize: "1.4rem", color: "#334155" }}>Enable at least one category to continue.</span>}
+        {!hasAny && <span style={{ fontSize: "1.4rem", color: "#64748b" }}>Enable at least one category to continue.</span>}
       </div>
     </div>
   );

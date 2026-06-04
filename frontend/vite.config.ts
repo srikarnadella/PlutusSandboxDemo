@@ -14,9 +14,13 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
         },
       },
+      historyApiFallback: true,
     },
     build: {
       outDir: "build",
+    },
+    preview: {
+      port: 3000,
     },
   };
 });
