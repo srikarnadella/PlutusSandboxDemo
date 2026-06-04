@@ -1,14 +1,8 @@
 # Plutus
 
-I built Plutus because I wanted to understand what was actually happening with my money — not just see a number at the end of the month. After Mint shut down and I found myself bouncing between spreadsheets and bank apps, I decided to build a replacement from scratch. The goal was simple: connect your bank once and get a real picture of your spending, without paying $15/month for a subscription or handing your data to another aggregator you don't control.
+I built Plutus because I wanted to understand what was actually happening with my money, not just see a number at the end of the month. After checking out Mint and other budgeting apps that all costed money, I found myself bouncing between spreadsheets and bank apps, I decided to build a replacement from scratch. The goal was simple: connect your bank once and get a real picture of your spending, without paying $15/month for a subscription or handing your data to another aggregator you don't control.
 
 Plutus is a full-stack personal finance dashboard powered by [Plaid](https://plaid.com) for bank connectivity and [Supabase](https://supabase.com) for auth and persistence. It pulls live transaction data, categorizes spending, detects recurring subscriptions automatically, flags unusual transactions using standard deviation analysis, and lets you set per-category budgets and savings goals that persist across sessions. The backend is a Java/Dropwizard REST API with a three-tier transaction cache (in-memory → Supabase → Plaid delta sync) so the dashboard loads fast on repeat visits. The frontend is React + TypeScript with a dark glassmorphic design — no component libraries, just inline styles to keep it portable. This is a sandbox demo connected to Plaid's test environment; bank credentials are `user_good` / `pass_good` at any institution.
-
----
-
-Personal finance dashboard — a Mint/YNAB replacement built on [Plaid](https://plaid.com) and [Supabase](https://supabase.com).
-
-Connect your bank once, then get a full spending dashboard: budgets, savings goals, transaction history, subscriptions, account balances, and 6-month trends.
 
 ---
 
