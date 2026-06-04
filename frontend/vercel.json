@@ -1,6 +1,7 @@
 {
+  "outputDirectory": "build",
   "rewrites": [
-      { "source": "/api/:path*", "destination": "https://plutusbackend.onrender.com/api/:path*" },
-      { "source": "/(.*)", "destination": "/index.html" }
-    ]
+    { "source": "/api/:path*", "destination": "https://plutusbackend.onrender.com/api/:path*" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
