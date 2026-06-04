@@ -17,7 +17,7 @@ export default defineConfig(({ mode }) => {
       historyApiFallback: true,
     },
     build: {
-      outDir: "build",
+      outDir: "dist",
     },
     preview: {
       port: 3000,
