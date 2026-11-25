@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useContext } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../../lib/supabase";
 import { apiFetch } from "../../lib/apiFetch";
-import type { User } from "@supabase/supabase-js";
 import Context from "../../Context";
 import Dashboard from "./Dashboard";
 import Transactions from "./Transactions";
@@ -196,7 +195,7 @@ const Sidebar = ({
 
 const SpendingReview = () => {
   const _now = new Date();
-  const { dispatch } = useContext(Context);
+  const { dispatch, supabaseUser: user } = useContext(Context);
   const navigate = useNavigate();
   const { showToast } = useToast();
 
@@ -216,9 +215,9 @@ const SpendingReview = () => {
   const [result, setResult] = useState<ReviewResult | null>(null);
   const [selectedYear, setSelectedYear] = useState(_now.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(_now.getMonth() + 1);
-  const [user, setUser] = useState<User | null>(null);
   const [profileLoading, setProfileLoading] = useState(true);
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reviewSeqRef = useRef(0);
+  const settleRetriesRef = useRef(0);
 
   const monthOptions = Array.from({ length: 13 }, (_, i) => {
     const d = new Date(_now.getFullYear(), _now.getMonth() - i, 1);
@@ -239,12 +238,9 @@ const SpendingReview = () => {
   // ── Supabase load/save ──────────────────────────────────────────────────────
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      setUser(data.user);
-      if (data.user) loadProfile(data.user.id);
-      else setProfileLoading(false);
-    });
-  }, []);
+    if (user) loadProfile(user.id);
+    else setProfileLoading(false);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadProfile = async (uid: string) => {
     setProfileLoading(true);
@@ -292,7 +288,7 @@ const SpendingReview = () => {
   }, [profileLoading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveProfile = async (uid: string, data: IncomeSetup) => {
-    await supabase.from("user_profiles").upsert({
+    const { error: saveErr } = await supabase.from("user_profiles").upsert({
       id: uid,
       monthly_income: parseFloat(data.monthlyIncome) || null,
       rent: parseFloat(data.rent) || null,
@@ -301,6 +297,7 @@ const SpendingReview = () => {
       monthly_savings: parseFloat(data.monthlySavings) || null,
       updated_at: new Date().toISOString(),
     });
+    if (saveErr) showToast("Failed to save your finances", "error");
   };
 
   const saveGoals = async (uid: string, currentGoals: GoalRow[]) => {
@@ -325,17 +322,10 @@ const SpendingReview = () => {
     }
   };
 
-  // Debounced income save
-  useEffect(() => {
-    if (!user) return;
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => { saveProfile(user.id, income); }, 1500);
-    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
-  }, [income, user]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ── Review API ──────────────────────────────────────────────────────────────
 
   const runReview = async (overrideYear?: number, overrideMonth?: number) => {
+    const seq = ++reviewSeqRef.current;
     setLoading(true);
     setError(null);
     const yr = overrideYear ?? selectedYear;
@@ -357,12 +347,20 @@ const SpendingReview = () => {
         throw new Error(errorMsg);
       }
       const data = await resp.json();
+      if (seq !== reviewSeqRef.current) return;
       setResult(data);
-      if (user) saveGoals(user.id, goals);
+      // A newly linked bank keeps revising its first batches; quietly re-fetch until it settles
+      if (data.syncing && settleRetriesRef.current < 5) {
+        settleRetriesRef.current++;
+        setTimeout(() => { if (seq === reviewSeqRef.current) runReview(yr, mo); }, 3000);
+      } else if (!data.syncing) {
+        settleRetriesRef.current = 0;
+      }
     } catch (e: any) {
-      setError(e.message || "Unknown error");
+      // Clear the old result so a failed month switch doesn't show last month's numbers under the new label
+      if (seq === reviewSeqRef.current) { setError(e.message || "Unknown error"); setResult(null); }
     } finally {
-      setLoading(false);
+      if (seq === reviewSeqRef.current) setLoading(false);
     }
   };
 
@@ -445,7 +443,7 @@ const SpendingReview = () => {
             loading={loading}
             error={error}
             onUpdateGoals={(g) => setGoals(g)}
-            onRunReview={() => { runReview(); setActiveTab("dashboard"); }}
+            onRunReview={() => { if (user) saveGoals(user.id, goals); runReview(); setActiveTab("dashboard"); }}
           />
         );
       case "goals":
@@ -461,9 +459,9 @@ const SpendingReview = () => {
           <Account
             income={income}
             user={user}
-            onUpdateIncome={(inc) => setIncome(inc)}
-            onSave={() => { if (user) saveProfile(user.id, income); }}
+            onSave={(inc) => { setIncome(inc); if (user) saveProfile(user.id, inc); }}
             onSignOut={handleSignOut}
+            onBanksChanged={() => runReview()}
           />
         );
     }

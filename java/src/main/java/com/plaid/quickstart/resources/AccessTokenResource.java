@@ -5,6 +5,7 @@ import java.io.IOException;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.plaid.client.model.ItemPublicTokenExchangeRequest;
 import com.plaid.client.model.ItemPublicTokenExchangeResponse;
+import com.plaid.client.model.ItemRemoveRequest;
 import com.plaid.client.request.PlaidApi;
 import com.plaid.quickstart.JwtValidator;
 import com.plaid.quickstart.PlaidApiHelper;
@@ -68,11 +69,22 @@ public class AccessTokenResource {
     // Per-user map for fast in-memory lookup (primary/last item)
     QuickstartApplication.userTokens.put(userId, accessToken);
 
-    // Clear any old items before storing the new one (single-bank: prevents stale tokens surviving reconnect)
-    try {
-      supabaseService.removeAllItems(userId);
-    } catch (Exception e) {
-      LOG.warn("Failed to remove old plaid_items for user {}: {}", userId, e.getMessage());
+    // Relinking the same institution replaces the old item (otherwise its transactions count twice);
+    // a different institution is added alongside the existing ones.
+    if (req.institutionId != null && !req.institutionId.isEmpty()) {
+      try {
+        for (SupabaseService.PlaidItem old : supabaseService.getItems(userId)) {
+          if (!req.institutionId.equals(old.institutionId) || old.itemId.equals(itemId)) continue;
+          try {
+            PlaidApiHelper.callPlaid(plaidClient.itemRemove(new ItemRemoveRequest().accessToken(old.accessToken)));
+          } catch (Exception e) {
+            LOG.warn("Plaid itemRemove failed for replaced item={}: {}", old.itemId, e.getMessage());
+          }
+          supabaseService.removeItem(userId, old.itemId);
+        }
+      } catch (Exception e) {
+        LOG.warn("Failed to replace old plaid_items for user {}: {}", userId, e.getMessage());
+      }
     }
 
     // Persist to plaid_items (multi-bank) and user_profiles (legacy single-bank compat)

@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabase";
+import { useToast } from "../Toast";
 
 export interface SavingsGoal {
   id: string;
@@ -23,13 +24,15 @@ const EMOJIS = ["🎯", "🏠", "✈️", "🚗", "💍", "🎓", "💻", "🌴"
 
 const fmtRound = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
+const localDate = (ymd: string) => new Date(ymd + "T00:00:00");
+
 const daysUntil = (deadline: string) => {
-  const diff = new Date(deadline).getTime() - Date.now();
+  const diff = localDate(deadline).getTime() - Date.now();
   return Math.max(0, Math.ceil(diff / 86400000));
 };
 
 const monthsUntil = (deadline: string) => {
-  const d = new Date(deadline);
+  const d = localDate(deadline);
   const now = new Date();
   return Math.max(0, (d.getFullYear() - now.getFullYear()) * 12 + d.getMonth() - now.getMonth());
 };
@@ -37,6 +40,7 @@ const monthsUntil = (deadline: string) => {
 const EMPTY_FORM = { name: "", target_amount: "", current_amount: "", deadline: "", emoji: "🎯" };
 
 const Goals = ({ goalsData, user, onUpdate }: GoalsProps) => {
+  const { showToast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -55,15 +59,17 @@ const Goals = ({ goalsData, user, onUpdate }: GoalsProps) => {
       deadline: form.deadline || null,
       emoji: form.emoji,
     }).select().single();
-    if (!error && data) onUpdate([...goalsData, data]);
+    setSaving(false);
+    if (error || !data) { showToast("Couldn't save goal — please try again", "error"); return; }
+    onUpdate([...goalsData, data]);
     setForm(EMPTY_FORM);
     setShowForm(false);
-    setSaving(false);
   };
 
   const handleDelete = async (id: string) => {
     if (!user) return;
-    await supabase.from("savings_goals").delete().eq("id", id).eq("user_id", user.id);
+    const { error } = await supabase.from("savings_goals").delete().eq("id", id).eq("user_id", user.id);
+    if (error) { showToast("Couldn't delete goal", "error"); return; }
     onUpdate(goalsData.filter((g) => g.id !== id));
   };
 
@@ -74,7 +80,8 @@ const Goals = ({ goalsData, user, onUpdate }: GoalsProps) => {
     const { error } = await supabase.from("savings_goals")
       .update({ current_amount: newAmt })
       .eq("id", goal.id).eq("user_id", user.id);
-    if (!error) onUpdate(goalsData.map((g) => g.id === goal.id ? { ...g, current_amount: newAmt } : g));
+    if (error) showToast("Couldn't add funds", "error");
+    else onUpdate(goalsData.map((g) => g.id === goal.id ? { ...g, current_amount: newAmt } : g));
     setAddFundsId(null);
     setAddFundsAmt("");
   };

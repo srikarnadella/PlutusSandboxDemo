@@ -74,12 +74,24 @@ public class RemoveItemResource {
       LOG.error("Failed to remove item from Supabase for user={} item={}: {}", userId, req.itemId, e.getMessage());
     }
 
+    // Point the legacy user_profiles columns at a surviving item (or clear them). The frontend's
+    // connection check and the backend's legacy fallback both read them, so a stale value would
+    // send the user to a dashboard backed by a revoked token.
+    try {
+      List<SupabaseService.PlaidItem> remaining = QuickstartApplication.supabaseService.getItems(userId);
+      SupabaseService.PlaidItem next = remaining.isEmpty() ? null : remaining.get(0);
+      QuickstartApplication.supabaseService.storeAccessToken(userId,
+          next != null ? next.accessToken : null, next != null ? next.itemId : null);
+    } catch (Exception e) {
+      LOG.warn("Could not update user_profiles after removing item for user={}: {}", userId, e.getMessage());
+    }
+
     // Invalidate in-memory caches
     SpendingReviewResource.TRANSACTION_CACHE.remove(userId);
+    SpendingReviewResource.ITEMS_CACHE.remove(userId);
+    SpendingReviewResource.BALANCE_CACHE.remove(userId);
     // Clear primary userToken if it matched (next spending_review will reload from Supabase)
-    if (accessToken != null && accessToken.equals(QuickstartApplication.userTokens.get(userId))) {
-      QuickstartApplication.userTokens.remove(userId);
-    }
+    QuickstartApplication.userTokens.remove(userId);
 
     LOG.info("Removed item={} for user={}", req.itemId, userId);
     return Response.ok("{\"removed\":true}").build();

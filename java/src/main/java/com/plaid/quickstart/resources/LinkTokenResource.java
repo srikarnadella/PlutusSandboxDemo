@@ -27,6 +27,7 @@ public class LinkTokenResource {
   private final List<CountryCode> countryCodes;
   private final String redirectUri;
   private final JwtValidator jwtValidator;
+  private final String webhookUrl;
 
   public static class LinkToken {
     @JsonProperty("link_token") public final String linkToken;
@@ -34,7 +35,8 @@ public class LinkTokenResource {
   }
 
   public LinkTokenResource(PlaidApi plaidClient, List<Products> products,
-      List<CountryCode> countryCodes, String redirectUri, JwtValidator jwtValidator) {
+      List<CountryCode> countryCodes, String redirectUri, JwtValidator jwtValidator, String webhookUrl) {
+    this.webhookUrl = webhookUrl;
     this.plaidClient = plaidClient;
     this.products = products;
     this.countryCodes = countryCodes;
@@ -58,6 +60,7 @@ public class LinkTokenResource {
         .language("en");
 
     if (redirectUri != null && !redirectUri.isEmpty()) request.redirectUri(redirectUri);
+    if (webhookUrl != null && !webhookUrl.isEmpty()) request.webhook(webhookUrl);
 
     LinkTokenCreateResponse responseBody = PlaidApiHelper.callPlaid(plaidClient.linkTokenCreate(request));
     return new LinkToken(responseBody.getLinkToken());

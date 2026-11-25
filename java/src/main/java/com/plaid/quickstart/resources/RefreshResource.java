@@ -27,6 +27,7 @@ public class RefreshResource {
 
     // Clear in-memory transaction cache so next spending_review re-reads from Supabase
     SpendingReviewResource.TRANSACTION_CACHE.remove(userId);
+    SpendingReviewResource.BALANCE_CACHE.remove(userId);
 
     // Mark Supabase transaction cache as stale so delta sync runs on next spending_review call
     try {

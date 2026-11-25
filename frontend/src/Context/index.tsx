@@ -1,4 +1,4 @@
-import { createContext, useReducer, Dispatch, ReactNode, useEffect } from "react";
+import { createContext, useReducer, Dispatch, ReactNode, useEffect, useRef } from "react";
 import { User } from "@supabase/supabase-js";
 import { supabase } from "../lib/supabase";
 
@@ -87,61 +87,49 @@ export const QuickstartProvider: React.FC<{ children: ReactNode }> = (props) => 
   };
 
   const [state, dispatch] = useReducer(reducer, initialState);
+  // A restored session fires INITIAL_SESSION and then SIGNED_IN; only check the connection once per user
+  const checkedUserRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // Restore session on page load
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      dispatch({
-        type: "SET_STATE",
-        state: {
-          supabaseUser: session?.user ?? null,
-          isAuthLoading: false,
-        },
-      });
-      if (session?.user) {
-        checkPlaidConnection(session.user.id);
-      }
-    });
-
+    // INITIAL_SESSION fires on subscribe, so no separate getSession() call is needed.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       (event, session) => {
-        dispatch({
-          type: "SET_STATE",
-          state: {
-            supabaseUser: session?.user ?? null,
-            isAuthLoading: false,
-            ...(!session ? {
-              linkSuccess: false,
-              hasPlaidConnection: false,
-              linkToken: "",
-            } : {}),
-          },
-        });
+        const user = session?.user ?? null;
+        if (!user) {
+          checkedUserRef.current = null;
+          dispatch({ type: "SET_STATE", state: { supabaseUser: null, isAuthLoading: false, linkSuccess: false, hasPlaidConnection: false, linkToken: "" } });
+          return;
+        }
         // TOKEN_REFRESHED fires periodically — re-querying Supabase here risks
         // setting hasPlaidConnection:false if the read is slow/empty, which
         // bounces the user back to /connect. Only check on actual sign-in events.
-        if (session?.user && (event === "SIGNED_IN" || event === "INITIAL_SESSION")) {
-          checkPlaidConnection(session.user.id);
+        if ((event !== "SIGNED_IN" && event !== "INITIAL_SESSION") || checkedUserRef.current === user.id) {
+          dispatch({ type: "SET_STATE", state: { supabaseUser: user } });
+          return;
         }
+        checkedUserRef.current = user.id;
+        // Defer: supabase calls inside this callback can deadlock on the auth lock.
+        setTimeout(async () => {
+          const has = await checkPlaidConnection(user.id);
+          dispatch({ type: "SET_STATE", state: { supabaseUser: user, isAuthLoading: false, ...(has === null ? {} : { hasPlaidConnection: has }) } });
+        }, 0);
       }
     );
 
     return () => subscription.unsubscribe();
   }, []);
 
-  const checkPlaidConnection = async (userId: string) => {
+  // null on error — leave hasPlaidConnection as-is rather than kicking the user out
+  const checkPlaidConnection = async (userId: string): Promise<boolean | null> => {
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("user_profiles")
         .select("plaid_item_id")
         .eq("id", userId)
         .maybeSingle();
-      dispatch({
-        type: "SET_STATE",
-        state: { hasPlaidConnection: !!(data?.plaid_item_id) },
-      });
+      return error ? null : !!data?.plaid_item_id;
     } catch {
-      // On error leave hasPlaidConnection as-is — don't kick the user out
+      return null;
     }
   };
 

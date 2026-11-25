@@ -2,7 +2,6 @@ package com.plaid.quickstart.resources;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
-import com.plaid.quickstart.QuickstartApplication;
 
 import java.util.List;
 import javax.ws.rs.POST;
@@ -21,22 +20,15 @@ public class InfoResource {
 
   public static class InfoResponse {
     @JsonProperty
-    private final String itemId;
-    @JsonProperty
-    private final String accessToken;
-    @JsonProperty
     private final List<String> products;
 
-    public InfoResponse(List<String> plaidProducts, String accessToken, String itemId) {
+    public InfoResponse(List<String> plaidProducts) {
       this.products = plaidProducts;
-      this.accessToken = accessToken;
-      this.itemId = itemId;
     }
   }
 
   @POST
   public InfoResponse getInfo() {
-    return new InfoResponse(plaidProducts, QuickstartApplication.accessToken,
-      QuickstartApplication.itemId);
+    return new InfoResponse(plaidProducts);
   }
 }

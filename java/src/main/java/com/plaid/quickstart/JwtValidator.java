@@ -89,6 +89,8 @@ public class JwtValidator {
       String userId = user.path("id").asText(null);
       if (userId == null || userId.isEmpty()) return null;
 
+      // Every refreshed JWT is a new key; sweep expired ones so the map can't grow forever
+      if (cache.size() > 1000) cache.values().removeIf(CachedResult::isExpired);
       cache.put(authorizationHeader, new CachedResult(userId));
       return userId;
 

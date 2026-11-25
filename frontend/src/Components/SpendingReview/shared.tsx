@@ -63,4 +63,5 @@ export interface ReviewResult {
   monthly_trends: MonthlyTrend[];
   unusual_transactions: UnusualTransaction[];
   synced_at?: string;  // ISO instant — when data was last fetched from Plaid
+  syncing?: boolean;   // bank data still settling; the shell re-fetches shortly
 }

@@ -42,6 +42,7 @@ PLAID_ENV=sandbox
 PLAID_PRODUCTS=auth,transactions,signal
 PLAID_COUNTRY_CODES=US,CA
 PLAID_REDIRECT_URI=
+PLAID_WEBHOOK_URL=                 # public URL of /api/plaid_webhook; passed to link_token_create
 SIGNAL_RULESET_KEY=
 SUPABASE_URL=https://xxx.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=eyJ...   # backend only, never expose to browser
@@ -82,7 +83,9 @@ VITE_SUPABASE_ANON_KEY=eyJ...
 - `SupabaseService.java` — Java 11 `HttpClient` calls to Supabase REST API using service role key; `storeAccessToken(userId, accessToken, itemId)` and `getAccessToken(userId)`
 - `resources/AccessTokenResource.java` — POST `/api/set_access_token`; JWT-validated; exchanges public_token with Plaid; stores in `userTokens` map + Supabase
 - `resources/SpendingReviewResource.java` — POST `/api/spending_review`; JWT-validated; full analysis pipeline (see response shape below)
-- `JwtValidator.java` — validates Supabase JWTs by calling `/auth/v1/user` endpoint (network round-trip per request, no local caching)
+- `JwtValidator.java` — validates Supabase JWTs by calling `/auth/v1/user`; results cached per token for 5 min (expired entries swept once the map passes 1000)
+- `resources/PlaidWebhookResource.java` — POST `/api/plaid_webhook`; on any `TRANSACTIONS` webhook looks up the user via `plaid_items.item_id`, marks that item's Supabase cache stale and clears in-memory caches. Plaid-Verification signature is NOT checked yet
+- `resources/RefreshResource.java` — POST `/api/refresh_transactions`; clears transaction + balance caches so the next review delta-syncs
 
 ### SpendingReviewResponse Fields
 ```
@@ -98,7 +101,15 @@ goal_violations    — category, monthly_limit, amount_spent, over_by, transacti
 all_transactions   — name, amount, date, category, logo_url, transaction_id
 ```
 
-Token resolution order: `resolveAccessToken(userId)` → in-memory `userTokens` map → Supabase DB → throws 403.
+Item resolution: `resolveAllItems(userId)` → `ITEMS_CACHE` (5 min) → `plaid_items` table → legacy `user_profiles.plaid_access_token` → 403.
+
+Transaction caching (`SpendingReviewResource`):
+1. `TRANSACTION_CACHE` in memory, 5 min TTL
+2. `plaid_transaction_cache` table (per user+item JSON blob + sync cursor), fresh for 30 min
+3. Plaid `/transactions/sync` delta from the stored cursor; the updated blob is written back to Supabase asynchronously
+Concurrent requests for the same user share one in-flight sync (`IN_FLIGHT`). Balances come from `/accounts/get` (Plaid's cached balances — `/accounts/balance/get` is slow and billed per call) and are cached 2 min in `BALANCE_CACHE`.
+Data counts as "settled" only after a sync pass with no changes: new items arrive in batches and get revised for a few seconds after linking (Plaid's `transactions_update_status` says complete before the data lands). Unsettled data is served but not cached as fresh, and the response sets `syncing: true` so the dashboard re-fetches every 3 s (max 5 times). A brand-new item waits up to 10 s for its first transactions.
+Anything that changes a user's items or data (connect, remove, refresh, webhook) must clear the relevant caches.
 
 ### Supabase Schema
 ```sql
@@ -126,6 +137,7 @@ transaction_notes (
 )
 ```
 RLS enabled on all tables. Backend uses service role key to bypass RLS for `plaid_access_token` writes.
+Run `java/migrations/lock_down_plaid_tokens.sql`: it enables RLS on `plaid_transaction_cache` / `plaid_items` and uses column grants so the browser can never read `access_token` / `plaid_access_token`. Any new client query on these tables must stick to granted columns.
 
 ## Plaid Flow
 
@@ -147,27 +159,29 @@ RLS enabled on all tables. Backend uses service role key to bypass RLS for `plai
 ## Known Gotchas
 
 - **Plaid sandbox credentials:** `user_good` / `pass_good` at any institution
+- **Auth gate:** `Context` uses `onAuthStateChange` only (it emits `INITIAL_SESSION`); `isAuthLoading` stays true until the `plaid_item_id` check resolves so `/dashboard` reloads don't bounce through `/connect`
+- **Link token / `/api/info`** are only fetched when the user is logged in and has no Plaid connection
+- **`SpendingReview` reads the user from Context** — don't add `supabase.auth.getUser()` calls (network round-trip). Review responses are sequence-guarded so rapid month switches can't show stale data. Goals are saved only from the Budgets tab
+- **Route code-splitting:** `Landing` and `SpendingReview` are `React.lazy` in `App.tsx`
+- **Backend warm-up:** `index.tsx` fires `GET /api/health` on load to wake the Render free-tier backend early
 - **`unusual_transactions`** is computed by the backend but NOT YET surfaced in the dashboard UI
 - **`goal_violations`** is computed but only used for the health grade — no dedicated alerts panel yet
-- **Backend restart:** token is fetched from Supabase on first request via `resolveAccessToken`. Requires `plaid_access_token` column in `user_profiles` (added 2026-05-31).
+- **Backend restart:** in-memory caches are lost; first request re-reads items and the transaction cache from Supabase.
 - **Port conflicts:** `start.sh` and `npm start` both auto-kill their ports before binding
-- **LinkTokenResource uses a timestamp as `clientUserId`** — not tied to the authenticated user; Plaid can't correlate items across sessions properly
-- **`clientName` is still "Quickstart Client"** in `LinkTokenResource.java` — must be changed to "Plutus" for production
-- **Quickstart leftover resources** — many files under `java/src/main/java/.../resources/` (AccountsResource, AssetsResource, AuthResource, etc.) are from the Plaid quickstart template and are not used by the app. They use the global `QuickstartApplication.accessToken` which is a single-user variable — these endpoints are NOT multi-user safe and should be removed or never exposed.
-- **Global static mutable state in `QuickstartApplication.java`** — `accessToken`, `userToken`, `userId`, `itemId` are legacy globals set on each `set_access_token` call. They persist for legacy quickstart endpoints only. `SpendingReviewResource` does NOT use them; it uses `userTokens` map.
+- **Quickstart leftovers removed** — unused Plaid quickstart resources, the payment/user-token link flows and the single-user static globals are gone. Registered resources: AccessToken, Health, Info, LinkExitError, LinkToken, PlaidWebhook, Refresh, RemoveItem, SpendingReview
+- **Budget presets skip Transfer/Payment** (money movement), and `category_spending` only lists those two when the user budgets or avoids them, so the category panel adds up to Total Spent
+- **Spending totals exclude money movement** — transactions whose top-level Plaid category is `Transfer` or `Payment` are left out of `total_spent`, `previous_month`, `monthly_trends`, top merchants, subscriptions and unusual detection (card payments and transfers double-count). They still appear in `all_transactions`, `category_spending` and budget checks
+- **Plaid errors propagate** — if every item fails to sync, `spending_review` returns the Plaid error (e.g. `ITEM_LOGIN_REQUIRED`) so the dashboard shows the reconnect prompt instead of $0
+- **Income is saved only by Account's Save button** — there is deliberately no autosave (it used to overwrite saved income with blanks when the profile loaded slowly)
 - **Tailwind is imported in `vite.config.ts`** (`@tailwindcss/vite`) even though SpendingReview uses inline styles. Safe to leave; just don't use Tailwind in SpendingReview components.
 - **`result: any` type** in `SpendingReview/index.tsx` (line ~212) — typed properly in Dashboard but not at shell level
-- **JwtValidator makes a network call to Supabase per request** — no caching. Under load this adds 50–200ms per API call.
-- **TransactionsSync cursor is not persisted** — resets to null on every spending_review call. For real users with 2+ years of history, this means full re-sync on every page load.
-- **Only one bank per user** — `user_profiles.plaid_item_id` is a single column; connecting a second bank overwrites the first.
+- **Multiple banks** — linking a new institution adds a `plaid_items` row; relinking the same `institution_id` replaces (and Plaid-removes) the old item. `RemoveItemResource` re-points `user_profiles.plaid_item_id/plaid_access_token` to a surviving item or clears them, and deletes the item's `plaid_transaction_cache` row
+- **Existing items have no webhook** — `PLAID_WEBHOOK_URL` only applies to newly linked items; older ones need Plaid `/item/webhook/update`.
 
 ## Code Quality Issues to Know
 
-- `CATEGORY_COLORS` and `MerchantAvatar` are duplicated between `Dashboard.tsx` and `Transactions.tsx` — extract to `SpendingReview/shared.ts` when touching both files
-- `IncomeSetup` and `GoalRow` interfaces are re-declared in `Account.tsx` and `Dashboard.tsx` — canonical definitions are in `index.tsx` and exported
-- Unused/orphaned frontend components: `Components/Endpoint/`, `Components/Error/`, `Components/Table/`, `Components/ProductTypes/`, `Components/Home/` — leftover quickstart boilerplate, safe to delete
-- Category matching in `SpendingReviewResource.matchesCategory()` uses fuzzy `contains()` — can cause false matches (e.g. "Payment" matches "Payment Initiation")
-- `primaryCategory()` returns `cats.get(cats.size()-1)` (most specific subcategory) — this may not match the top-level category names used in `PRESET_CATEGORIES`
+- `IncomeSetup` and `GoalRow` are re-declared in `Dashboard.tsx` / `Budgets.tsx` — canonical definitions are exported from `index.tsx` (and `CATEGORY_COLORS`/`MerchantAvatar` from `shared.tsx`)
+- Categories are Plaid's **top-level** names everywhere: `primaryCat()` returns `cats.get(0)` and `matchesCat()` is an exact top-level match, so budgets, colors and the Transactions filter agree with `PRESET_CATEGORIES`
 
 ## Rebuilding
 
@@ -186,10 +200,7 @@ After any Java source change: `cd java && mvn package -DskipTests`
    ```
    `PLAID_CLIENT_ID` stays the same.
 
-2. **`LinkTokenResource.java`** — change client name:
-   ```java
-   .clientName("Plutus")       // was: "Quickstart Client"
-   ```
+2. **`LinkTokenResource.java`** — client name is already "Plutus"; `clientUserId` is the Supabase user id.
 
 3. **Remove sandbox-only products** from `PLAID_PRODUCTS` if not approved:
    - `signal` requires separate Plaid approval
@@ -202,9 +213,7 @@ After any Java source change: `cd java && mvn package -DskipTests`
    - Estimated transaction volume
    - Review takes 2–7 business days
 
-6. **Set up Plaid webhooks** — production transactions are not immediately available; Plaid fires `TRANSACTIONS_SYNC_UPDATES_AVAILABLE` when new data arrives. Without this, users see stale data until they refresh.
-
-7. **Update Plaid webhook URL** in the Plaid dashboard to your backend's `/api/plaid_webhook` endpoint (endpoint not yet built — see TODO).
+6. **Set `PLAID_WEBHOOK_URL`** to your backend's public `/api/plaid_webhook`. The handler invalidates caches on `TRANSACTIONS` webhooks. Add Plaid-Verification JWT checking before relying on webhook payloads for anything beyond cache invalidation.
 
 ### What Does NOT Change
 

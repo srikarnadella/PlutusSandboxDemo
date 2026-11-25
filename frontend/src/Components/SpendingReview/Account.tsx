@@ -5,20 +5,15 @@ import { supabase } from "../../lib/supabase";
 import { apiFetch } from "../../lib/apiFetch";
 import Context from "../../Context";
 
-interface IncomeSetup {
-  monthlyIncome: string;
-  rent: string;
-  utilities: string;
-  otherFixed: string;
-  monthlySavings: string;
-}
+import type { IncomeSetup } from "./index";
+import { useToast } from "../Toast";
 
 interface AccountProps {
   income: IncomeSetup;
   user: User | null;
-  onUpdateIncome: (income: IncomeSetup) => void;
-  onSave: () => void;
+  onSave: (income: IncomeSetup) => void;
   onSignOut: () => void;
+  onBanksChanged: () => void;
 }
 
 interface PlaidItem {
@@ -47,6 +42,7 @@ const Field = ({ label, value, onChange }: { label: string; value: string; onCha
 // ── Add Bank Button (self-contained Plaid Link flow) ──────────────────────────
 
 const AddBankButton = ({ onSuccess }: { onSuccess: (itemId: string, institutionName: string) => void }) => {
+  const { showToast } = useToast();
   const [linkToken, setLinkToken] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
 
@@ -64,6 +60,8 @@ const AddBankButton = ({ onSuccess }: { onSuccess: (itemId: string, institutionN
       if (resp.ok) {
         const data = await resp.json();
         onSuccess(data.item_id, (metadata as any)?.institution?.name ?? "Connected Bank");
+      } else {
+        showToast("Couldn't connect that bank — please try again", "error");
       }
       setLinkToken(null);
     },
@@ -83,6 +81,8 @@ const AddBankButton = ({ onSuccess }: { onSuccess: (itemId: string, institutionN
       if (resp.ok) {
         const data = await resp.json();
         setLinkToken(data.link_token);
+      } else {
+        showToast("Couldn't start bank connection", "error");
       }
     } finally {
       setFetching(false);
@@ -115,8 +115,9 @@ const AddBankButton = ({ onSuccess }: { onSuccess: (itemId: string, institutionN
 
 // ── Connected Banks section ───────────────────────────────────────────────────
 
-const ConnectedBanks = ({ user, onLastRemoved }: { user: User | null; onLastRemoved: () => void }) => {
+const ConnectedBanks = ({ user, onChanged }: { user: User | null; onChanged: () => void }) => {
   const { dispatch } = React.useContext(Context);
+  const { showToast } = useToast();
   const [items, setItems] = useState<PlaidItem[]>([]);
   const [removing, setRemoving] = useState<string | null>(null);
 
@@ -127,30 +128,34 @@ const ConnectedBanks = ({ user, onLastRemoved }: { user: User | null; onLastRemo
       .eq("user_id", user.id)
       .order("created_at")
       .then(({ data }) => setItems(data ?? []));
-  }, [user]);
+  }, [user?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRemove = async (itemId: string) => {
     setRemoving(itemId);
     try {
-      await apiFetch("/api/remove_item", { method: "POST", body: JSON.stringify({ item_id: itemId }) });
+      const resp = await apiFetch("/api/remove_item", { method: "POST", body: JSON.stringify({ item_id: itemId }) });
+      if (!resp.ok) { showToast("Couldn't remove that bank", "error"); return; }
       const remaining = items.filter((i) => i.item_id !== itemId);
       setItems(remaining);
-      if (remaining.length === 0) {
-        dispatch({ type: "SET_STATE", state: { hasPlaidConnection: false, linkSuccess: false } });
-        onLastRemoved();
-      }
+      // Last bank gone → the router sends the user to /connect
+      if (remaining.length === 0) dispatch({ type: "SET_STATE", state: { hasPlaidConnection: false, linkSuccess: false } });
+      else onChanged();
     } finally {
       setRemoving(null);
     }
   };
 
-  const handleBankAdded = (itemId: string, institutionName: string) => {
-    // Optimistically add to list; real data will load on next Supabase query
-    setItems((prev) => [
-      ...prev,
-      { id: itemId, item_id: itemId, institution_name: institutionName, created_at: new Date().toISOString() },
-    ]);
+  const handleBankAdded = async () => {
+    // Re-read: relinking an institution replaces its old row server-side
+    if (user) {
+      const { data } = await supabase.from("plaid_items")
+        .select("id, item_id, institution_name, created_at")
+        .eq("user_id", user.id)
+        .order("created_at");
+      setItems(data ?? []);
+    }
     dispatch({ type: "SET_STATE", state: { hasPlaidConnection: true } });
+    onChanged();
   };
 
   const INSTITUTION_COLORS = ["#059669", "#8b5cf6", "#06b6d4", "#f59e0b", "#ec4899", "#38bdf8"];
@@ -198,7 +203,7 @@ const ConnectedBanks = ({ user, onLastRemoved }: { user: User | null; onLastRemo
 
 // ── Main Account component ────────────────────────────────────────────────────
 
-const Account = ({ income, user, onUpdateIncome, onSave, onSignOut }: AccountProps) => {
+const Account = ({ income, user, onSave, onSignOut, onBanksChanged }: AccountProps) => {
   const [local, setLocal] = useState(income);
   const [saved, setSaved] = useState(false);
 
@@ -210,8 +215,7 @@ const Account = ({ income, user, onUpdateIncome, onSave, onSignOut }: AccountPro
   };
 
   const handleSave = () => {
-    onUpdateIncome(local);
-    onSave();
+    onSave(local);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -260,7 +264,7 @@ const Account = ({ income, user, onUpdateIncome, onSave, onSignOut }: AccountPro
         <>
           {sectionTitle("Connected Banks")}
           <p style={{ margin: "0 0 2rem", fontSize: "1.3rem", color: "#64748b" }}>Add multiple accounts for a complete financial picture</p>
-          <ConnectedBanks user={user} onLastRemoved={onSignOut} />
+          <ConnectedBanks user={user} onChanged={onBanksChanged} />
         </>
       )}
 

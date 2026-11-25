@@ -3,7 +3,6 @@ package com.plaid.quickstart.resources;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -21,12 +20,13 @@ import java.util.stream.Collectors;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.plaid.client.model.AccountsBalanceGetRequest;
+import com.plaid.client.model.AccountsGetRequest;
 import com.plaid.client.model.AccountsGetResponse;
 import com.plaid.client.model.RemovedTransaction;
 import com.plaid.client.model.Transaction;
 import com.plaid.client.model.TransactionsSyncRequest;
 import com.plaid.client.model.TransactionsSyncResponse;
+import com.plaid.client.model.TransactionsUpdateStatus;
 import com.plaid.client.request.PlaidApi;
 import com.plaid.quickstart.JwtValidator;
 import com.plaid.quickstart.PlaidApiHelper;
@@ -50,6 +50,8 @@ import org.slf4j.LoggerFactory;
 public class SpendingReviewResource {
   private static final Logger LOG = LoggerFactory.getLogger(SpendingReviewResource.class);
   private static final ObjectMapper MAPPER = new ObjectMapper();
+  private static final DateTimeFormatter MONTH_LABEL = DateTimeFormatter.ofPattern("MMM yyyy");
+  private static final DateTimeFormatter PERIOD_LABEL = DateTimeFormatter.ofPattern("MMMM yyyy");
   private static final TypeReference<List<StoredTx>> TX_LIST_TYPE = new TypeReference<List<StoredTx>>() {};
 
   // How long a Supabase transaction cache entry is considered fresh before a delta sync is needed
@@ -61,6 +63,9 @@ public class SpendingReviewResource {
   // ── In-memory caches ──────────────────────────────────────────────────────
   public static final Map<String, CachedTransactions> TRANSACTION_CACHE = new ConcurrentHashMap<>();
 
+  // One sync per user at a time — concurrent requests share the in-flight result instead of each hitting Plaid
+  private static final Map<String, CompletableFuture<CachedTransactions>> IN_FLIGHT = new ConcurrentHashMap<>();
+
   // Items list cache — avoids a Supabase round-trip on every spending_review call
   public static final Map<String, CachedItems> ITEMS_CACHE = new ConcurrentHashMap<>();
 
@@ -71,7 +76,7 @@ public class SpendingReviewResource {
     boolean isStale() { return Duration.between(cachedAt, Instant.now()).toMinutes() >= 5; }
   }
 
-  // Account balance cache — Plaid balance call is ~300 ms; 2-minute TTL is fine for a dashboard
+  // Account balance cache — saves a Plaid round-trip per dashboard load; 2-minute TTL
   public static final Map<String, CachedBalances> BALANCE_CACHE = new ConcurrentHashMap<>();
 
   private static class CachedBalances {
@@ -85,8 +90,12 @@ public class SpendingReviewResource {
     public final List<StoredTx> transactions;
     public final Instant syncedAt;     // when data was last fetched from Plaid
     private final Instant cachedAt;    // when this entry was put in memory
+    final boolean complete;
 
-    public CachedTransactions(List<StoredTx> txns, Instant syncedAt) {
+    public CachedTransactions(List<StoredTx> txns, Instant syncedAt) { this(txns, syncedAt, true); }
+
+    CachedTransactions(List<StoredTx> txns, Instant syncedAt, boolean complete) {
+      this.complete = complete;
       this.transactions = txns;
       this.syncedAt = syncedAt != null ? syncedAt : Instant.now();
       this.cachedAt = Instant.now();
@@ -121,9 +130,8 @@ public class SpendingReviewResource {
     return s;
   }
 
-  private static YearMonth ym(StoredTx t) {
-    if (t.dt == null) return null;
-    return YearMonth.from(LocalDate.parse(t.dt));
+  private static String ym(StoredTx t) {
+    return (t.dt == null || t.dt.length() < 7) ? null : t.dt.substring(0, 7);
   }
 
   private static String displayName(StoredTx t) {
@@ -278,12 +286,15 @@ public class SpendingReviewResource {
     @JsonProperty public List<AccountSummary> accounts;
     @JsonProperty("monthly_trends")       public List<MonthlyTrend> monthly_trends;
     @JsonProperty("synced_at")            public String synced_at;  // ISO instant — when data was last fetched from Plaid
+    @JsonProperty public boolean syncing;   // true while a bank's data is still settling; the UI re-fetches
 
     SpendingReviewResponse(List<UnusualTransaction> unusual, List<GoalViolation> violations,
                            ReviewStats stats, List<MerchantSummary> topMerchants,
                            List<SubscriptionItem> subscriptions, PreviousMonthSummary prevMonth,
                            List<TransactionSummary> allTxns, List<CategorySummary> catSpending,
-                           List<AccountSummary> accounts, List<MonthlyTrend> trends, String syncedAt) {
+                           List<AccountSummary> accounts, List<MonthlyTrend> trends, String syncedAt,
+                           boolean syncing) {
+      this.syncing = syncing;
       this.unusual_transactions = unusual; this.goal_violations = violations;
       this.stats = stats; this.top_merchants = topMerchants; this.subscriptions = subscriptions;
       this.previous_month = prevMonth; this.all_transactions = allTxns;
@@ -317,45 +328,70 @@ public class SpendingReviewResource {
     CompletableFuture<List<AccountSummary>> balFuture = CompletableFuture.supplyAsync(() ->
         fetchAllAccountBalancesCached(userId, items));
 
-    CachedTransactions cache = txFuture.join();
+    CachedTransactions cache;
+    try {
+      cache = txFuture.join();
+    } catch (java.util.concurrent.CompletionException e) {
+      throw unwrap(e);
+    }
     List<AccountSummary> accounts = balFuture.join();
-    List<StoredTx> all = cache.transactions;
 
-    List<StoredTx> debits = all.stream()
+    List<StoredTx> outflows = cache.transactions.stream()
         .filter(t -> t.amt > 0)
+        .collect(Collectors.toList());
+    // Card payments and transfers move money between accounts; counting them double-counts real spending
+    List<StoredTx> debits = outflows.stream()
+        .filter(t -> !isMoneyMovement(t))
         .collect(Collectors.toList());
 
     YearMonth targetMonth = (request.year != null && request.month != null)
         ? YearMonth.of(request.year, request.month)
         : YearMonth.now();
+    String targetKey = targetMonth.toString();
 
-    List<StoredTx> thisMonthDebits = debits.stream()
-        .filter(t -> targetMonth.equals(ym(t)))
+    List<StoredTx> thisMonthOutflows = outflows.stream()
+        .filter(t -> targetKey.equals(ym(t)))
+        .collect(Collectors.toList());
+    List<StoredTx> thisMonthDebits = thisMonthOutflows.stream()
+        .filter(t -> !isMoneyMovement(t))
         .collect(Collectors.toList());
 
-    YearMonth prevMonth = targetMonth.minusMonths(1);
+    String prevKey = targetMonth.minusMonths(1).toString();
     List<StoredTx> prevMonthDebits = debits.stream()
-        .filter(t -> prevMonth.equals(ym(t)))
+        .filter(t -> prevKey.equals(ym(t)))
         .collect(Collectors.toList());
     PreviousMonthSummary prevSummary = new PreviousMonthSummary(
         round2(prevMonthDebits.stream().mapToDouble(t -> t.amt).sum()),
         prevMonthDebits.size());
 
     double totalSpent = round2(thisMonthDebits.stream().mapToDouble(t -> t.amt).sum());
-    String period = targetMonth.format(DateTimeFormatter.ofPattern("MMMM yyyy"));
+    String period = targetMonth.format(PERIOD_LABEL);
 
     return new SpendingReviewResponse(
         detectUnusual(debits, thisMonthDebits),
-        checkGoals(request, thisMonthDebits),
+        checkGoals(request, thisMonthOutflows),
         new ReviewStats(thisMonthDebits.size(), totalSpent, period),
         computeTopMerchants(thisMonthDebits),
         detectSubscriptions(debits),
         prevSummary,
-        toTransactionSummaries(thisMonthDebits),
-        computeCategorySpending(request, thisMonthDebits),
+        toTransactionSummaries(thisMonthOutflows),
+        computeCategorySpending(request, thisMonthOutflows),
         accounts,
         computeMonthlyTrends(debits, targetMonth),
-        cache.syncedAt.toString());
+        cache.syncedAt.toString(),
+        !cache.complete);
+  }
+
+  private static boolean isMoneyMovement(StoredTx t) {
+    if (t.cats == null || t.cats.isEmpty()) return false;
+    String top = t.cats.get(0);
+    return "Transfer".equalsIgnoreCase(top) || "Payment".equalsIgnoreCase(top);
+  }
+
+  private static RuntimeException unwrap(Throwable e) {
+    while ((e instanceof java.util.concurrent.CompletionException || e.getClass() == RuntimeException.class)
+        && e.getCause() != null) e = e.getCause();
+    return e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
   }
 
   // ── Token resolution ───────────────────────────────────────────────────────
@@ -403,29 +439,66 @@ public class SpendingReviewResource {
     CachedTransactions mem = TRANSACTION_CACHE.get(userId);
     if (mem != null && !mem.isStale()) return mem;
 
+    CompletableFuture<CachedTransactions> mine = new CompletableFuture<>();
+    CompletableFuture<CachedTransactions> running = IN_FLIGHT.putIfAbsent(userId, mine);
+    if (running != null) {
+      try { return running.join(); }
+      catch (java.util.concurrent.CompletionException e) { throw unwrap(e); }
+    }
+    try {
+      CachedTransactions result = syncAllItems(userId, items);
+      mine.complete(result);
+      return result;
+    } catch (RuntimeException e) {
+      mine.completeExceptionally(e);
+      throw e;
+    } finally {
+      IN_FLIGHT.remove(userId, mine);
+    }
+  }
+
+  private CachedTransactions syncAllItems(String userId, List<SupabaseService.PlaidItem> items) {
     // Tier 2 + 3: per-item Supabase cache + delta sync
     List<StoredTx> merged = new ArrayList<>();
     Instant latestSync = Instant.EPOCH;
+    RuntimeException lastError = null;
+    int ok = 0;
+    boolean allComplete = true;
 
     for (SupabaseService.PlaidItem item : items) {
       try {
         ItemSyncResult result = fetchTransactionsForItem(userId, item);
         merged.addAll(result.transactions);
         if (result.syncedAt.isAfter(latestSync)) latestSync = result.syncedAt;
+        allComplete &= result.complete;
+        ok++;
       } catch (Exception e) {
         LOG.warn("Skipping item={} for user={} — sync failed: {}", item.itemId, userId, e.getMessage());
+        lastError = e instanceof RuntimeException ? (RuntimeException) e : new RuntimeException(e);
       }
     }
+    if (ok == 0 && lastError != null) throw lastError;
 
-    CachedTransactions cached = new CachedTransactions(merged, latestSync);
-    TRANSACTION_CACHE.put(userId, cached);
+    CachedTransactions cached = new CachedTransactions(merged, latestSync, allComplete);
+    // Partial history (item still loading at Plaid) must not be served from memory for 5 minutes
+    if (allComplete) TRANSACTION_CACHE.put(userId, cached);
     return cached;
   }
 
   private static class ItemSyncResult {
     final List<StoredTx> transactions;
     final Instant syncedAt;
-    ItemSyncResult(List<StoredTx> t, Instant s) { transactions = t; syncedAt = s; }
+    final boolean complete;
+    ItemSyncResult(List<StoredTx> t, Instant s, boolean c) { transactions = t; syncedAt = s; complete = c; }
+  }
+
+  private static class SyncOutcome {
+    final String cursor;
+    final TransactionsUpdateStatus status;
+    final int changes;
+    SyncOutcome(String cursor, TransactionsUpdateStatus status, int changes) {
+      this.cursor = cursor; this.status = status; this.changes = changes;
+    }
   }
 
   private ItemSyncResult fetchTransactionsForItem(String userId, SupabaseService.PlaidItem item)
@@ -446,7 +519,7 @@ public class SpendingReviewResource {
       // Serve from Supabase cache — zero Plaid API calls
       LOG.debug("Serving from Supabase cache for item={} (last synced {})", item.itemId, supaCache.lastSyncedAt);
       List<StoredTx> txns = deserializeTransactions(supaCache.transactionsJson);
-      return new ItemSyncResult(txns, supaCache.lastSyncedAt);
+      return new ItemSyncResult(txns, supaCache.lastSyncedAt, true);
     }
 
     // Tier 3: Plaid delta sync (or full sync on first ever use)
@@ -461,35 +534,51 @@ public class SpendingReviewResource {
     String action = startCursor != null ? "delta sync" : "full sync";
     LOG.info("Plaid {} for item={} (existing={} txns)", action, item.itemId, existingById.size());
 
-    String newCursor = doSync(item.accessToken, startCursor, existingById);
+    SyncOutcome outcome = doSync(item.accessToken, startCursor, existingById);
+    // A just-linked item returns nothing for a few seconds, even after Plaid reports the update complete
+    for (int i = 0; i < 10 && existingById.isEmpty(); i++) {
+      Thread.sleep(1000);
+      outcome = doSync(item.accessToken, outcome.cursor, existingById);
+    }
+    String newCursor = outcome.cursor;
+    // ponytail: "settled" = a pass with no changes. Early batches on new items get revised (late rows,
+    // late categories), so changed data is served but kept stale until a quiet pass. Costs one extra
+    // delta sync after each change; switch to webhook-driven freshness once PLAID_WEBHOOK_URL is set everywhere.
+    boolean complete = outcome.changes == 0 && outcome.status != TransactionsUpdateStatus.NOT_READY;
     List<StoredTx> updated = new ArrayList<>(existingById.values());
 
-    // Persist updated cache to Supabase (best-effort — don't fail the request if this errors)
-    try {
-      String json = serializeTransactions(updated);
-      QuickstartApplication.supabaseService.storeTransactionCache(userId, item.itemId, json, newCursor);
-    } catch (Exception e) {
-      LOG.warn("Could not persist transaction cache for item={}: {}", item.itemId, e.getMessage());
-    }
+    // Best-effort, off the request path: serializing + uploading full history is the slowest step of a sync
+    CompletableFuture.runAsync(() -> {
+      try {
+        String json = serializeTransactions(updated);
+        QuickstartApplication.supabaseService.storeTransactionCache(userId, item.itemId, json, newCursor, complete);
+      } catch (Exception e) {
+        LOG.warn("Could not persist transaction cache for item={}: {}", item.itemId, e.getMessage());
+      }
+    });
 
-    return new ItemSyncResult(updated, Instant.now());
+    return new ItemSyncResult(updated, Instant.now(), complete);
   }
 
   /**
    * Runs a Plaid TransactionsSync loop (delta if cursor is set, full if null).
    * Mutates {@code byId} in-place (add/modify/remove) and returns the final cursor.
    */
-  private String doSync(String accessToken, String startCursor, Map<String, StoredTx> byId)
+  private SyncOutcome doSync(String accessToken, String startCursor, Map<String, StoredTx> byId)
       throws IOException, InterruptedException {
     String cursor = startCursor;
     boolean hasMore = true;
     int retries = 0;
+    int changes = 0;
+    TransactionsUpdateStatus status = null;
 
     while (hasMore) {
       TransactionsSyncRequest req = new TransactionsSyncRequest()
           .accessToken(accessToken)
           .cursor(cursor);
       TransactionsSyncResponse resp = PlaidApiHelper.callPlaid(plaidClient.transactionsSync(req));
+      status = resp.getTransactionsUpdateStatus();
+      changes += size(resp.getAdded()) + size(resp.getModified()) + size(resp.getRemoved());
 
       // New transactions
       if (resp.getAdded() != null) {
@@ -523,8 +612,11 @@ public class SpendingReviewResource {
         Thread.sleep(2000);
       }
     }
-    return cursor;
+    return new SyncOutcome(cursor, status, changes);
   }
+
+  private static int size(List<?> l) { return l == null ? 0 : l.size(); }
+
 
   // ── Serialization helpers ──────────────────────────────────────────────────
 
@@ -560,8 +652,10 @@ public class SpendingReviewResource {
 
   private List<AccountSummary> fetchAccountBalances(String accessToken) {
     try {
-      AccountsBalanceGetRequest req = new AccountsBalanceGetRequest().accessToken(accessToken);
-      AccountsGetResponse resp = PlaidApiHelper.callPlaid(plaidClient.accountsBalanceGet(req));
+      // /accounts/get returns Plaid's last-synced balances. /accounts/balance/get forces a live bank
+      // round-trip (seconds, and billed per call in production) — not worth it for a dashboard.
+      AccountsGetRequest req = new AccountsGetRequest().accessToken(accessToken);
+      AccountsGetResponse resp = PlaidApiHelper.callPlaid(plaidClient.accountsGet(req));
       return resp.getAccounts().stream()
           .map(a -> new AccountSummary(
               a.getName() != null ? a.getName() : "Account",
@@ -581,14 +675,17 @@ public class SpendingReviewResource {
   // ── Analysis methods (all use StoredTx) ───────────────────────────────────
 
   private List<MonthlyTrend> computeMonthlyTrends(List<StoredTx> debits, YearMonth anchor) {
+    Map<String, Double> byMonth = new HashMap<>();
+    for (StoredTx t : debits) {
+      String k = ym(t);
+      if (k != null) byMonth.merge(k, t.amt, Double::sum);
+    }
     List<MonthlyTrend> result = new ArrayList<>();
     for (int i = 5; i >= 0; i--) {
       YearMonth m = anchor.minusMonths(i);
-      double total = round2(debits.stream()
-          .filter(t -> m.equals(ym(t)))
-          .mapToDouble(t -> t.amt).sum());
+      double total = round2(byMonth.getOrDefault(m.toString(), 0.0));
       result.add(new MonthlyTrend(m.getYear(), m.getMonthValue(),
-          m.format(DateTimeFormatter.ofPattern("MMM yyyy")), total));
+          m.format(MONTH_LABEL), total));
     }
     return result;
   }
@@ -665,7 +762,7 @@ public class SpendingReviewResource {
     for (Map.Entry<String, List<StoredTx>> e : byMerchant.entrySet()) {
       List<StoredTx> txs = e.getValue();
       if (txs.size() < 2) continue;
-      Set<YearMonth> months = txs.stream().filter(t -> t.dt != null).map(t -> ym(t)).collect(Collectors.toSet());
+      Set<String> months = txs.stream().map(t -> ym(t)).filter(m -> m != null).collect(Collectors.toSet());
       if (months.size() < 2) continue;
       double avg = txs.stream().mapToDouble(t -> t.amt).average().orElse(0);
       if (avg <= 0) continue;
@@ -699,6 +796,9 @@ public class SpendingReviewResource {
 
     List<CategorySummary> result = new ArrayList<>();
     for (String cat : allCats) {
+      // Transfers/payments aren't in total_spent; only list them when the user tracks them
+      boolean movement = "Transfer".equalsIgnoreCase(cat) || "Payment".equalsIgnoreCase(cat);
+      if (movement && !budgetMap.containsKey(cat) && !avoidSet.contains(cat)) continue;
       List<StoredTx> matching = debits.stream().filter(t -> matchesCat(t.cats, cat)).collect(Collectors.toList());
       double total = round2(matching.stream().mapToDouble(t -> t.amt).sum());
       result.add(new CategorySummary(cat, total, budgetMap.getOrDefault(cat, 0.0), avoidSet.contains(cat), matching.size()));
@@ -709,17 +809,11 @@ public class SpendingReviewResource {
   // ── Category matching helpers ──────────────────────────────────────────────
 
   private boolean matchesCat(List<String> cats, String target) {
-    if (cats == null || cats.isEmpty()) return false;
-    String lTarget = target.toLowerCase();
-    return cats.stream().anyMatch(c -> {
-      String lc = c.toLowerCase();
-      return lc.equals(lTarget) || lc.contains(lTarget) || lTarget.contains(lc);
-    });
+    return cats != null && !cats.isEmpty() && cats.get(0).equalsIgnoreCase(target);
   }
 
   private String primaryCat(List<String> cats) {
-    if (cats == null || cats.isEmpty()) return "Other";
-    return cats.get(cats.size() - 1);
+    return (cats == null || cats.isEmpty()) ? "Other" : cats.get(0);
   }
 
   private List<SimpleTransaction> toSimple(List<StoredTx> txs) {

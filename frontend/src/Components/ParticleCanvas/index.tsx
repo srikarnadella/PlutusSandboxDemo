@@ -122,7 +122,14 @@ const ParticleCanvas: React.FC<ParticleCanvasProps> = ({
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseout", onMouseOut);
     resize();
-    animate();
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      ctx.fillStyle = "rgba(7,11,20,1)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      particles.forEach((p) => p.draw());
+      connect();
+    } else {
+      animate();
+    }
 
     return () => {
       window.removeEventListener("resize", resize);

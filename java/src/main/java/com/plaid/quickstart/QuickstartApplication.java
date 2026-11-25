@@ -31,15 +31,6 @@ public class QuickstartApplication extends Application<QuickstartConfiguration> 
   public static final Map<String, String> userTokens = new ConcurrentHashMap<>();
   public static SupabaseService supabaseService;
 
-  // Legacy globals kept for unregistered quickstart resource source files that still compile
-  public static String accessToken;
-  public static String userToken;
-  public static String userId;
-  public static String itemId;
-  public static String paymentId;
-  public static String authorizationId;
-  public static String accountId;
-
   private PlaidApi plaidClient;
   private ApiClient apiClient;
 
@@ -110,19 +101,13 @@ public class QuickstartApplication extends Application<QuickstartConfiguration> 
     environment.jersey().register(new HealthResource());
     environment.jersey().register(new PlaidWebhookResource());
     environment.jersey().register(new InfoResource(Arrays.asList(configuration.getPlaidProducts().split(","))));
-    environment.jersey().register(new LinkTokenResource(plaidClient, products, countryCodes, redirectUri, jwtValidator));
-    environment.jersey().register(new LinkTokenWithPaymentResource(plaidClient, Arrays.asList(configuration.getPlaidProducts().split(",")), Arrays.asList(configuration.getPlaidCountryCodes().split(",")), redirectUri));
+    environment.jersey().register(new LinkTokenResource(plaidClient, products, countryCodes, redirectUri, jwtValidator, System.getenv("PLAID_WEBHOOK_URL")));
     environment.jersey().register(new AccessTokenResource(plaidClient, supabaseService, jwtValidator));
     environment.jersey().register(new LinkExitErrorResource());
-    environment.jersey().register(new UserTokenResource(plaidClient, Arrays.asList(configuration.getPlaidProducts().split(","))));
     environment.jersey().register(new SpendingReviewResource(plaidClient, jwtValidator));
-    environment.jersey().register(new UpdateLinkTokenResource(plaidClient, jwtValidator, countryCodes));
     environment.jersey().register(new RemoveItemResource(plaidClient, jwtValidator));
     environment.jersey().register(new RefreshResource(jwtValidator));
 
     LOG.info("Plutus backend started — Plaid env: {}, CORS origin: {}", plaidEnv, allowedOrigin);
   }
-
-  protected PlaidApi client() { return plaidClient; }
-  protected ApiClient apiClient() { return apiClient; }
 }

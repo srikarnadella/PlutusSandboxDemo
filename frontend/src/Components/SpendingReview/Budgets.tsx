@@ -7,14 +7,15 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const PRESETS: Record<string, Record<string, number>> = {
-  Tight:    { "Food and Drink": 0.15, Shops: 0.08, Travel: 0.05, Recreation: 0.03, Healthcare: 0.08, Service: 0.03, Transfer: 0.05, Payment: 0.05 },
-  Standard: { "Food and Drink": 0.25, Shops: 0.12, Travel: 0.10, Recreation: 0.06, Healthcare: 0.10, Service: 0.05, Transfer: 0.08, Payment: 0.08 },
-  Generous: { "Food and Drink": 0.35, Shops: 0.20, Travel: 0.15, Recreation: 0.10, Healthcare: 0.15, Service: 0.08, Transfer: 0.10, Payment: 0.10 },
+  // Transfer/Payment are money movement (excluded from spending), so presets don't budget them
+  Tight:    { "Food and Drink": 0.15, Shops: 0.08, Travel: 0.05, Recreation: 0.03, Healthcare: 0.08, Service: 0.03 },
+  Standard: { "Food and Drink": 0.25, Shops: 0.12, Travel: 0.10, Recreation: 0.06, Healthcare: 0.10, Service: 0.05 },
+  Generous: { "Food and Drink": 0.35, Shops: 0.20, Travel: 0.15, Recreation: 0.10, Healthcare: 0.15, Service: 0.08 },
 };
 const PRESET_ABS: Record<string, Record<string, number>> = {
-  Tight:    { "Food and Drink": 200, Shops: 100, Travel: 80,  Recreation: 40,  Healthcare: 80,  Service: 40,  Transfer: 100, Payment: 100 },
-  Standard: { "Food and Drink": 350, Shops: 175, Travel: 150, Recreation: 75,  Healthcare: 150, Service: 75,  Transfer: 150, Payment: 150 },
-  Generous: { "Food and Drink": 500, Shops: 300, Travel: 250, Recreation: 125, Healthcare: 200, Service: 100, Transfer: 200, Payment: 200 },
+  Tight:    { "Food and Drink": 200, Shops: 100, Travel: 80,  Recreation: 40,  Healthcare: 80,  Service: 40 },
+  Standard: { "Food and Drink": 350, Shops: 175, Travel: 150, Recreation: 75,  Healthcare: 150, Service: 75 },
+  Generous: { "Food and Drink": 500, Shops: 300, Travel: 250, Recreation: 125, Healthcare: 200, Service: 100 },
 };
 
 export interface GoalRow { category: string; enabled: boolean; monthlyLimit: string; avoid: boolean; }
@@ -49,7 +50,7 @@ const Budgets = ({ goals, discretionary, allocated, loading, error, onUpdateGoal
       const limit = discretionary > 0
         ? Math.round((discretionary * (fracs[g.category] || 0)) / 5) * 5
         : abs[g.category] || 0;
-      return { ...g, enabled: true, avoid: false, monthlyLimit: limit > 0 ? String(limit) : "" };
+      return { ...g, enabled: limit > 0, avoid: false, monthlyLimit: limit > 0 ? String(limit) : "" };
     }));
   };
 

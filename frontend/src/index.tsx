@@ -6,6 +6,9 @@ import App from "./App";
 import { QuickstartProvider } from "./Context";
 import { ToastProvider } from "./Components/Toast";
 
+// Wake the backend (Render free tier sleeps when idle) while the user is still logging in
+fetch("/api/health").catch(() => {});
+
 const root = ReactDOM.createRoot(
   document.getElementById("root") as HTMLElement
 );

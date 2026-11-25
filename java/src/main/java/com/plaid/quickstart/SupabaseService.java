@@ -88,28 +88,6 @@ public class SupabaseService {
     return (token == null || token.isEmpty()) ? null : token;
   }
 
-  public String getSyncCursor(String userId) throws IOException, InterruptedException {
-    if (!configured || userId == null || userId.isEmpty()) return null;
-    String encodedId = URLEncoder.encode(userId, StandardCharsets.UTF_8);
-    HttpRequest request = HttpRequest.newBuilder()
-        .uri(URI.create(supabaseUrl + "/rest/v1/user_profiles?id=eq." + encodedId + "&select=plaid_sync_cursor"))
-        .header("apikey", serviceRoleKey)
-        .header("Authorization", "Bearer " + serviceRoleKey)
-        .header("Accept", "application/json")
-        .timeout(Duration.ofSeconds(10))
-        .GET()
-        .build();
-    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    if (response.statusCode() >= 300) return null;
-    String body = response.body();
-    if (body == null || body.isEmpty()) return null;
-    JsonNode arr = MAPPER.readTree(body);
-    if (!arr.isArray() || arr.isEmpty()) return null;
-    JsonNode node = arr.get(0).path("plaid_sync_cursor");
-    if (node.isMissingNode() || node.isNull()) return null;
-    String cursor = node.asText(null);
-    return (cursor == null || cursor.isEmpty()) ? null : cursor;
-  }
 
   // ── Multi-bank: plaid_items table ─────────────────────────────────────────
 
@@ -185,23 +163,24 @@ public class SupabaseService {
     return items;
   }
 
-  public void removeAllItems(String userId) throws IOException, InterruptedException {
-    if (!configured || userId == null || userId.isEmpty()) return;
-    String encodedUser = URLEncoder.encode(userId, StandardCharsets.UTF_8);
+  public String findUserIdByItem(String itemId) throws IOException, InterruptedException {
+    if (!configured || itemId == null || itemId.isEmpty()) return null;
     HttpRequest request = HttpRequest.newBuilder()
-        .uri(URI.create(supabaseUrl + "/rest/v1/plaid_items?user_id=eq." + encodedUser))
+        .uri(URI.create(supabaseUrl + "/rest/v1/plaid_items?item_id=eq."
+            + URLEncoder.encode(itemId, StandardCharsets.UTF_8) + "&select=user_id&limit=1"))
         .header("apikey", serviceRoleKey)
         .header("Authorization", "Bearer " + serviceRoleKey)
+        .header("Accept", "application/json")
         .timeout(Duration.ofSeconds(10))
-        .DELETE()
+        .GET()
         .build();
     HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    if (response.statusCode() >= 300) {
-      LOG.warn("Failed to remove all plaid_items for user={}: {}", userId, response.statusCode());
-    } else {
-      LOG.info("Removed all plaid_items for user={}", userId);
-    }
+    if (response.statusCode() >= 300) return null;
+    JsonNode arr = MAPPER.readTree(response.body());
+    if (!arr.isArray() || arr.isEmpty()) return null;
+    return arr.get(0).path("user_id").asText(null);
   }
+
 
   public void removeItem(String userId, String itemId) throws IOException, InterruptedException {
     if (!configured) return;
@@ -221,6 +200,15 @@ public class SupabaseService {
     } else {
       LOG.info("Removed plaid_item for user={} item={}", userId, itemId);
     }
+    // The cached history blob for this item is now orphaned
+    httpClient.send(HttpRequest.newBuilder()
+        .uri(URI.create(supabaseUrl + "/rest/v1/plaid_transaction_cache?user_id=eq." + encodedUser
+            + "&item_id=eq." + encodedItem))
+        .header("apikey", serviceRoleKey)
+        .header("Authorization", "Bearer " + serviceRoleKey)
+        .timeout(Duration.ofSeconds(10))
+        .DELETE()
+        .build(), HttpResponse.BodyHandlers.discarding());
   }
 
   // ── Transaction cache: plaid_transaction_cache table ─────────────────────
@@ -266,7 +254,8 @@ public class SupabaseService {
     return new TransactionCacheEntry(json, cursor, at);
   }
 
-  public void storeTransactionCache(String userId, String itemId, String json, String cursor)
+  /** {@code complete=false} stores the data but leaves it stale so the next load delta-syncs again. */
+  public void storeTransactionCache(String userId, String itemId, String json, String cursor, boolean complete)
       throws IOException, InterruptedException {
     if (!configured) return;
     ObjectNode node = MAPPER.createObjectNode();
@@ -274,7 +263,7 @@ public class SupabaseService {
     node.put("item_id", itemId);
     node.put("transactions_json", json);
     if (cursor != null) node.put("sync_cursor", cursor); else node.putNull("sync_cursor");
-    node.put("last_synced_at", java.time.Instant.now().toString());
+    node.put("last_synced_at", (complete ? java.time.Instant.now() : java.time.Instant.EPOCH).toString());
     String body = MAPPER.writeValueAsString(node);
     HttpRequest request = HttpRequest.newBuilder()
         .uri(URI.create(supabaseUrl + "/rest/v1/plaid_transaction_cache"))
@@ -293,8 +282,14 @@ public class SupabaseService {
 
   /** Marks all transaction caches for a user as stale so the next spending_review triggers a delta sync. */
   public void markTransactionCacheStale(String userId) throws IOException, InterruptedException {
+    markTransactionCacheStale(userId, null);
+  }
+
+  /** Same, limited to one item when itemId is non-null. */
+  public void markTransactionCacheStale(String userId, String itemId) throws IOException, InterruptedException {
     if (!configured || userId == null) return;
-    String encUser = URLEncoder.encode(userId, StandardCharsets.UTF_8);
+    String encUser = URLEncoder.encode(userId, StandardCharsets.UTF_8)
+        + (itemId != null ? "&item_id=eq." + URLEncoder.encode(itemId, StandardCharsets.UTF_8) : "");
     ObjectNode node = MAPPER.createObjectNode();
     node.put("last_synced_at", java.time.Instant.EPOCH.toString());
     String body = MAPPER.writeValueAsString(node);
@@ -310,24 +305,4 @@ public class SupabaseService {
     httpClient.send(request, HttpResponse.BodyHandlers.ofString());
   }
 
-  public void storeSyncCursor(String userId, String cursor) throws IOException, InterruptedException {
-    if (!configured || userId == null || cursor == null) return;
-    ObjectNode node = MAPPER.createObjectNode();
-    node.put("id", userId);
-    node.put("plaid_sync_cursor", cursor);
-    String body = MAPPER.writeValueAsString(node);
-    HttpRequest request = HttpRequest.newBuilder()
-        .uri(URI.create(supabaseUrl + "/rest/v1/user_profiles"))
-        .header("apikey", serviceRoleKey)
-        .header("Authorization", "Bearer " + serviceRoleKey)
-        .header("Content-Type", "application/json")
-        .header("Prefer", "resolution=merge-duplicates")
-        .timeout(Duration.ofSeconds(10))
-        .POST(HttpRequest.BodyPublishers.ofString(body))
-        .build();
-    HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-    if (response.statusCode() >= 300) {
-      LOG.warn("Failed to store sync cursor for user {}: {}", userId, response.statusCode());
-    }
-  }
 }

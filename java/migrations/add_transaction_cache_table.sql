@@ -1,6 +1,7 @@
 -- Run this in the Supabase SQL editor.
 -- Stores serialized transactions per user+item so Plaid is only called on delta sync.
--- Backend-only access (no RLS needed — service role key bypasses RLS regardless).
+-- Backend-only. RLS + revoked grants are applied in lock_down_plaid_tokens.sql — without them the
+-- anon key can read every user's rows through the REST API.
 
 CREATE TABLE IF NOT EXISTS plaid_transaction_cache (
   user_id        uuid REFERENCES auth.users NOT NULL,

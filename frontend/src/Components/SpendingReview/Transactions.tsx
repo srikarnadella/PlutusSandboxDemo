@@ -73,7 +73,7 @@ const Transactions = ({ transactions, selectedYear, selectedMonth, loading, mont
     return out;
   }, [transactions, search, activeCategory, sortField, sortDir]);
 
-  useEffect(() => setPage(0), [search, categoryFilter, customCategory, sortField, sortDir]);
+  useEffect(() => setPage(0), [transactions, search, categoryFilter, customCategory, sortField, sortDir]);
 
   // Auto-focus the custom input when it appears
   useEffect(() => {
@@ -116,7 +116,7 @@ const Transactions = ({ transactions, selectedYear, selectedMonth, loading, mont
 
   const commitNote = (tx: AllTransaction) => {
     const id = tx.transaction_id ?? tx.name + tx.date;
-    if (id) onNoteChange(id, draftNote, draftTag);
+    if (id && (draftNote !== (notes[id] ?? "") || draftTag !== (noteTags[id] ?? ""))) onNoteChange(id, draftNote, draftTag);
   };
 
   const SortBtn = ({ field, label }: { field: typeof sortField; label: string }) => (

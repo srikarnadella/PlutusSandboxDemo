@@ -10,4 +10,5 @@ WORKDIR /app
 COPY --from=build /app/target/quickstart-1.0-SNAPSHOT.jar app.jar
 COPY config.yml config.yml
 EXPOSE 8000
-CMD ["java", "-jar", "app.jar", "server", "config.yml"]
+# Size the heap to the container (small Render/Fly instances) instead of the host
+CMD ["java", "-XX:MaxRAMPercentage=75", "-XX:+UseSerialGC", "-jar", "app.jar", "server", "config.yml"]

@@ -6,8 +6,7 @@ import { supabase } from "../../lib/supabase";
 import { apiFetch } from "../../lib/apiFetch";
 
 const Link = () => {
-  const { linkToken, isPaymentInitiation, isCraProductsExclusively, dispatch, supabaseUser } =
-    useContext(Context);
+  const { linkToken, dispatch, supabaseUser } = useContext(Context);
 
   const onExit = React.useCallback(
     (error: any, metadata: any) => {
@@ -48,7 +47,14 @@ const Link = () => {
         if (!response.ok) {
           dispatch({
             type: "SET_STATE",
-            state: { itemId: null, accessToken: null, isItemAccess: false },
+            state: {
+              itemId: null, accessToken: null, isItemAccess: false,
+              linkExitError: {
+                error_type: "API_ERROR", error_code: `HTTP_${response.status}`,
+                error_message: "We couldn't save your bank connection. Please try again.",
+                display_message: "", institution_name: metadata?.institution?.name ?? "",
+              },
+            },
           });
           return;
         }
@@ -72,17 +78,9 @@ const Link = () => {
         });
       };
 
-      if (isPaymentInitiation) {
-        dispatch({ type: "SET_STATE", state: { isItemAccess: false, linkSuccess: true } });
-      } else if (isCraProductsExclusively) {
-        dispatch({ type: "SET_STATE", state: { isItemAccess: false, linkSuccess: true } });
-      } else {
-        await exchangePublicTokenForAccessToken();
-      }
-
-      window.history.pushState("", "", "/dashboard");
+      await exchangePublicTokenForAccessToken();
     },
-    [dispatch, isPaymentInitiation, isCraProductsExclusively, supabaseUser]
+    [dispatch, supabaseUser]
   );
 
   let isOauth = false;
